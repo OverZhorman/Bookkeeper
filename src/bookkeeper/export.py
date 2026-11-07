@@ -244,7 +244,14 @@ def run_download(worker, job) -> None:
                 path.write_bytes(data)
                 _update(job["id"], state="done", file=path.name, progress=1, total=1, finished_at=now())
                 return
-        chapters = site.chapters(book)
+        def listing(n: int):  # long books: the chapter list is built (and read) chapter by chapter
+            worker.activity = f"downloading «{row['title'][:30]}»: {n} chapters so far"
+            _update(job["id"], progress=n)
+        site.progress = listing
+        try:
+            chapters = site.chapters(book)
+        finally:
+            site.progress = None
         start = max(0, int(options.get("from", 1)) - 1)
         end = int(options["to"]) if options.get("to") else len(chapters)
         chapters = chapters[start:end]

@@ -20,7 +20,8 @@ SORTS = {
 }
 
 LIST_COLUMNS = ("b.id, b.site, b.url, b.title, b.authors, b.cover, b.lang, b.status, b.chapters, b.words, b.rating, "
-                "b.votes, b.likes, b.views, b.popularity, b.pov, b.pov_source, b.narrator, b.access, b.adult, "
+                "b.votes, b.likes, b.views, b.popularity, b.pov, b.pov_source, b.narrator, b.access, "
+                "(b.adult = 1 OR EXISTS(SELECT 1 FROM book_tags x WHERE x.book_id = b.id AND x.tag = 'adult')) AS adult, "
                 "b.updated_at, b.work_id, b.is_translation, b.description, u.shelf, u.favorite")
 
 
@@ -106,8 +107,14 @@ def build_where(p: dict) -> tuple[str, list, str, list]:
         where.append("b.updated_at >= date('now', ?)")
         args.append(f"-{int(v)} days")
 
-    if not p.get("adult"):
-        where.append("b.adult = 0")
+    # 18+ books are shown unless you hide them (the switch in the filters, saved as the hide_adult setting).
+    # adult=hide / adult=only in the address override the switch; adult=1 (older saved searches) means "show".
+    adult = str(p.get("adult") or "")
+    adult_sql = "(b.adult = 1 OR b.id IN (SELECT book_id FROM book_tags WHERE tag='adult'))"
+    if adult == "only":
+        where.append(adult_sql)
+    elif adult in ("hide", "0") or (not adult and db.get_setting("hide_adult", False)):
+        where.append(f"NOT {adult_sql}")
     shelf = p.get("shelf") or "hide-hidden"
     if shelf == "hide-hidden":
         where.append("(u.shelf IS NULL OR u.shelf != 'hidden')")
@@ -159,7 +166,7 @@ def _attach_tags(books: list[dict], limit: int = 12):
         return
     ids = [b["id"] for b in books]
     rows = db.conn().execute(
-        f"SELECT bt.book_id, bt.tag, GROUP_CONCAT(DISTINCT bt.source) AS sources, t.label, t.label_ru, t.category, "
+        f"SELECT bt.book_id, bt.tag, GROUP_CONCAT(DISTINCT bt.source) AS sources, t.label, t.label_ru, t.label_uk, t.category, "
         f"t.known, t.books FROM book_tags bt JOIN tags t ON t.id = bt.tag WHERE bt.book_id IN "
         f"({','.join('?' * len(ids))}) GROUP BY bt.book_id, bt.tag", ids).fetchall()
     by_book: dict[int, list] = {}
@@ -167,7 +174,7 @@ def _attach_tags(books: list[dict], limit: int = 12):
         if r["category"] == "narration" and r["tag"] in T.POV_TAGS:
             continue  # shown separately as the narration badge
         by_book.setdefault(r["book_id"], []).append(
-            {"id": r["tag"], "label": r["label"], "label_ru": r["label_ru"], "category": r["category"],
+            {"id": r["tag"], "label": r["label"], "label_ru": r["label_ru"], "label_uk": r["label_uk"], "category": r["category"],
              "sources": r["sources"].split(","), "known": r["known"], "count": r["books"]})
     for b in books:
         tags = by_book.get(b["id"], [])
@@ -204,11 +211,11 @@ def book_detail(book_id: int) -> dict | None:
     d["extra"] = jload(d["extra"], {})
     d["favorite"] = bool(d.get("favorite"))
     tag_rows = c.execute(
-        "SELECT bt.tag, bt.source, bt.raw, t.label, t.label_ru, t.category, t.known, t.books FROM book_tags bt "
+        "SELECT bt.tag, bt.source, bt.raw, t.label, t.label_ru, t.label_uk, t.category, t.known, t.books FROM book_tags bt "
         "JOIN tags t ON t.id = bt.tag WHERE bt.book_id=? ORDER BY t.category, t.label", (book_id,)).fetchall()
     tags: dict[str, dict] = {}
     for t in tag_rows:
-        e = tags.setdefault(t["tag"], {"id": t["tag"], "label": t["label"], "label_ru": t["label_ru"],
+        e = tags.setdefault(t["tag"], {"id": t["tag"], "label": t["label"], "label_ru": t["label_ru"], "label_uk": t["label_uk"],
                                        "category": t["category"], "known": t["known"], "count": t["books"],
                                        "sources": [], "raw": []})
         e["sources"].append(t["source"])
@@ -242,7 +249,7 @@ def tag_suggestions(q: str, limit: int = 20) -> list[dict]:
     else:
         like = f"%{q}%"
         rows = c.execute(
-            "SELECT * FROM tags WHERE (ulower(label) LIKE ? OR ulower(label_ru) LIKE ? OR id LIKE ?) "
-            "ORDER BY (ulower(label) LIKE ? OR ulower(label_ru) LIKE ?) DESC, known DESC, books DESC LIMIT ?",
-            (like, like, like, f"{q}%", f"{q}%", limit))
+            "SELECT * FROM tags WHERE (ulower(label) LIKE ? OR ulower(label_ru) LIKE ? OR ulower(label_uk) LIKE ? OR id LIKE ?) "
+            "ORDER BY (ulower(label) LIKE ? OR ulower(label_ru) LIKE ? OR ulower(label_uk) LIKE ?) DESC, known DESC, books DESC "
+            "LIMIT ?", (like, like, like, like, f"{q}%", f"{q}%", f"{q}%", limit))
     return [dict(r) for r in rows]

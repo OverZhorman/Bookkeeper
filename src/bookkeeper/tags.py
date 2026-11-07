@@ -54,12 +54,12 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
         "развитие персонажа", "постепенное развитие", "гг развивается", "слабый гг в начале"]),
     "smart-lead": ("Smart lead", "Умный ГГ", "protagonist", [
         "умный гг", "умный главный герой", "умная героиня", "clever protagonist", "smart mc", "smart protagonist",
-        "calm protagonist", "хладнокровный гг", "расчетливый гг", "гг не ояш"]),
+        "расчетливый гг"]),
     "villain-lead": ("Villain lead", "ГГ злодей", "protagonist", [
         "гг злодей", "главный герой злодей", "villain protagonist", "villainous lead", "evil protagonist",
         "темный гг", "злой гг"]),
     "anti-hero": ("Anti-hero", "Антигерой", "protagonist", [
-        "антигерой", "anti-hero", "antihero", "anti-hero lead", "гг антигерой", "ruthless protagonist",
+        "антигерой", "anti-hero", "antihero", "anti-hero lead", "гг антигерой",
         "беспринципный гг", "циничный гг"]),
     "nonhuman-lead": ("Non-human lead", "ГГ не человек", "protagonist", [
         "гг не человек", "нечеловеческий главный герой", "non-human protagonist", "nonhuman protagonist",
@@ -82,7 +82,7 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     "gamelit": ("GameLit", "Геймлит", "genre", ["gamelit", "геймлит", "game lit", "game literature"]),
     "rpg-elements": ("RPG / game elements", "Элементы РПГ", "theme", [
         "элементы рпг", "rpg elements", "rpg", "рпг", "игровые элементы", "game elements", "level system",
-        "система уровней", "уровни", "статы", "characteristics", "game ranking system", "skills"]),
+        "система уровней", "уровни", "статы", "characteristics", "skills"]),
     "system": ("System", "Система", "theme", [
         "система", "system", "игровая система", "системный", "system administrator", "system invasion",
         "интерфейс", "the system", "system novel"]),
@@ -95,8 +95,7 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
         "другой мир", "путешествие в другой мир", "перенос в другой мир", "transported to another world",
         "transported into another world", "another world", "попаданцы в магические миры",
         "попаданцы в другие миры", "portal fantasy", "portal fantasy isekai", "summoned hero", "призыв героя",
-        "призыв в другой мир", "попаданцы в иные миры", "прыжки между мирами", "путешествия между мирами",
-        "переміщення в інший світ", "попаданці"]),
+        "призыв в другой мир", "попаданцы в иные миры", "попаданці"]),
     "reincarnation": ("Reincarnation", "Реинкарнация / перерождение", "theme", [
         "реинкарнация", "перерождение", "переродился", "переродилась", "reincarnation", "reincarnated",
         "rebirth", "reborn", "новая жизнь", "перерождение в другом мире", "реінкарнація", "переродження"]),
@@ -139,8 +138,8 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     "adventure": ("Adventure", "Приключения", "genre", [
         "приключения", "приключенческое фэнтези", "adventure", "adventures", "пригоди", "приключенческое"]),
     "romance": ("Romance", "Любовный роман / романтика", "genre", [
-        "любовный роман", "романтика", "romance", "romantic", "любовь", "романтическое", "любовная линия",
-        "love", "romance subplot", "современный любовный роман", "короткий любовный роман", "любовні романи",
+        "любовный роман", "романтика", "romance", "romantic", "любовь", "романтическое",
+        "love", "современный любовный роман", "короткий любовный роман", "любовні романи",
         "любовний роман", "романтика (жанр)"]),
     "romantic-fantasy": ("Romantic fantasy", "Любовное фэнтези", "genre", [
         "любовное фэнтези", "романтическое фэнтези", "romantic fantasy", "romance fantasy", "любовна фантастика",
@@ -235,8 +234,7 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     "medieval": ("Medieval", "Средневековье", "setting", ["средневековье", "medieval", "средние века"]),
     "mythology": ("Mythology", "Мифология", "theme", ["мифология", "mythology", "mythos", "мифы", "фольклор",
                                                      "славянское фэнтези", "славянская мифология"]),
-    "superheroes": ("Superheroes", "Супергерои", "theme", ["супергерои", "superheroes", "super heroes",
-                                                          "суперспособности", "superpowers", "сверхспособности"]),
+    "superheroes": ("Superheroes", "Супергерои", "theme", ["супергерои", "superheroes", "super heroes"]),
     "family": ("Family", "Семья", "theme", ["семья", "family", "дети", "отцы и дети"]),
     "cooking": ("Cooking", "Кулинария", "theme", ["кулинария", "cooking", "еда", "food"]),
     "sports": ("Sports", "Спорт", "theme", ["спорт", "sports"]),
@@ -257,8 +255,7 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     # --- content ---
     "adult": ("Adult content (18+)", "Для взрослых (18+)", "content", [
         "эротика", "эротическое фэнтези", "erotica", "smut", "18+", "r18", "r-18", "nc-17", "nc-21",
-        "adult", "mature", "explicit", "эротическая фантастика", "откровенные сцены", "ecchi", "этти",
-        "эччи", "лемон"]),
+        "adult", "explicit", "эротическая фантастика", "откровенные сцены", "лемон"]),
     "violence": ("Graphic violence", "Насилие / жестокость", "content", [
         "насилие", "жестокость", "graphic violence", "gore", "violence", "кровь", "расчлененка", "жорстокість"]),
     # --- origin & format ---
@@ -276,7 +273,7 @@ TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     "korean-novel": ("Korean novel", "Корейская новелла", "origin", ["корея", "корейская новелла",
                                                                      "korean", "korean novel", "kr"]),
     "japanese-novel": ("Japanese light novel", "Японское ранобэ", "origin", [
-        "япония", "японское ранобэ", "japanese", "japanese novel", "light novel", "ранобэ", "jp", "lightnovel"]),
+        "япония", "японское ранобэ", "japanese", "japanese novel", "jp"]),
     "english-novel": ("English web novel", "Англоязычная новелла", "origin", ["английский", "english novel",
                                                                             "english web novel"]),
     "demographic-shounen": ("Shounen", "Сёнэн", "demographic", ["сёнэн", "сенэн", "shounen", "shonen"]),
@@ -367,6 +364,20 @@ RULES: dict[str, list[str]] = {
 CATEGORY_ORDER = ["narration", "genre", "theme", "protagonist", "setting", "relationship", "content",
                   "format", "origin", "demographic", "fanfic", "other"]
 
+# The rest of the list (tropes, settings, content notes, fandoms, Ukrainian names) lives in tagdata.py.
+from .tagdata import MORE_COMPOUND, MORE_RULES, MORE_SYNONYMS, MORE_TAGS, UK  # noqa: E402
+
+TAGS.update(MORE_TAGS)
+for _tid, _extra in MORE_SYNONYMS.items():
+    _en, _ru, _cat, _syn = TAGS[_tid]
+    TAGS[_tid] = (_en, _ru, _cat, [*_syn, *_extra])
+COMPOUND.update(MORE_COMPOUND)
+for _tid, _extra in MORE_RULES.items():
+    RULES[_tid] = [*RULES.get(_tid, []), *_extra]
+
+# Bump when the built-in list changes: every book's site labels are then mapped again on the next start.
+TAGS_VERSION = 3
+
 _KEY_RE = re.compile(r"[^0-9a-zа-яіїєґ+]+")
 
 
@@ -391,15 +402,17 @@ def _user_config() -> dict:
 def _tables():
     """(synonym key -> [tag ids], rules, tag info). Built-in data plus the user's my_tags.toml."""
     user = _user_config()
-    info = {tid: {"label": en, "label_ru": ru, "category": cat} for tid, (en, ru, cat, _) in TAGS.items()}
+    info = {tid: {"label": en, "label_ru": ru, "label_uk": UK.get(tid), "category": cat}
+            for tid, (en, ru, cat, _) in TAGS.items()}
     for tid, extra in (user.get("tags") or {}).items():
         if isinstance(extra, dict):
-            base = info.setdefault(tid, {"label": tid, "label_ru": None, "category": "other"})
-            base.update({k: v for k, v in extra.items() if k in ("label", "label_ru", "category")})
+            base = info.setdefault(tid, {"label": tid, "label_ru": None, "label_uk": None, "category": "other"})
+            base.update({k: v for k, v in extra.items() if k in ("label", "label_ru", "label_uk", "category")})
     syn: dict[str, list[str]] = {}
     for tid, (en, ru, _cat, synonyms) in TAGS.items():
-        for s in [tid, en, ru, *synonyms]:
-            syn.setdefault(key(s), [tid])
+        for s in [tid, en, ru, UK.get(tid) or "", *synonyms]:
+            if key(s):
+                syn.setdefault(key(s), [tid])
     for label, ids in COMPOUND.items():
         syn[key(label)] = list(ids)
     for label, ids in (user.get("synonyms") or {}).items():
@@ -423,6 +436,12 @@ def canonical(label: str) -> list[str]:
     syn, _, _ = _tables()
     if k in syn:
         return syn[k]
+    # Bilingual labels such as "Naruto / Наруто" or "Фэнтези | Fantasy": use whichever side is known.
+    parts = [p for p in re.split(r"\s+[/|]\s+", label) if p.strip()]
+    if len(parts) > 1:
+        known = [t for p in parts for t in syn.get(key(p), [])]
+        if known:
+            return list(dict.fromkeys(known))
     return [label.strip().lower().replace("ё", "е")]
 
 
@@ -442,7 +461,20 @@ def implied(tag_ids: set[str]) -> set[str]:
 
 def info(tag_id: str) -> dict:
     _, _, tag_info = _tables()
-    return tag_info.get(tag_id) or {"label": tag_id, "label_ru": None, "category": "other"}
+    return tag_info.get(tag_id) or {"label": tag_id, "label_ru": None, "label_uk": None, "category": "other"}
+
+
+def collisions() -> list[tuple[str, str, str]]:
+    """Built-in synonyms that point at a different tag than the one they're listed under
+    (label, listed under, actually maps to). Used by the tests to keep the list clean."""
+    syn, _, _ = _tables()
+    out = []
+    for tid, (en, ru, _cat, synonyms) in TAGS.items():
+        for s in [en, ru, UK.get(tid) or "", *synonyms]:
+            k = key(s)
+            if k and k in syn and tid not in syn[k]:
+                out.append((s, tid, ",".join(syn[k])))
+    return out
 
 
 def is_known(tag_id: str) -> bool:

@@ -38,6 +38,18 @@ class Litnet(Site):
     lang = "ru"
     min_interval = 1.5
     note = "Russian and Ukrainian web fiction. Everything except the chapter text comes from the catalog pages."
+    lists_adult = True
+    login_url = f"{BASE}/ru/auth/login"
+    # Litnet's login is several steps (phone or e-mail, then a code or password), so you log in yourself once;
+    # Bookkeeper keeps the session.
+    login_autofill = False
+    login_benefit = ("18+ books, and the chapters you bought (Bookkeeper's downloads then include them). "
+                     "In the window, press «Вход».")
+    logged_in_js = "(document.querySelector('#ga-isLoggedIn') || {getAttribute: () => '0'}).getAttribute('value') === '1'"
+
+    def check_login(self) -> bool | None:
+        m = re.search(r'id="ga-isLoggedIn" value="(\d)"', self.http.get(f"{BASE}/ru").text)
+        return (m.group(1) == "1") if m else None
 
     def _info(self, it: dict) -> BookInfo:
         authors = [a["name"].strip() for a in (it.get("author"), it.get("co_author")) if a and a.get("name")]

@@ -1,6 +1,6 @@
 [project]
 name = "bookkeeper"
-version = "0.1.0"
+version = "0.3.0"
 description = "A personal catalog of books and web novels from many sites, with merged tags and automatic first-person detection"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.27",
     "selectolax>=0.3.21",
     "playwright>=1.44",
+    "websockets>=13",
 ]
 
 [project.scripts]

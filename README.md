@@ -3,11 +3,13 @@
 Your own catalog of books and web novels from the sites you read. It merges every site's tags into one list, adds the tags authors forgot, and works out from the text whether a book is told in the **first person**.
 
 - **Collects books** from your sites slowly in the background: title, author, description, genres, tags, length, status, likes and rating.
-- **One shared tag list.** «ЛитРПГ», «LitRPG», «LITRPG» and «Lit-RPG» are one tag. Rules add the obvious ones: a LitRPG book also gets "RPG / game elements".
+- **One shared tag list** of about 330 tags, each with an English, Russian and Ukrainian name. «ЛитРПГ», «LitRPG», «LITRPG» and «Lit-RPG» are one tag, and so are «Slow Romance» and «Медленная романтика». Rules add the obvious ones: a LitRPG book also gets "RPG / game elements".
 - **Detects narration** (first, second or third person, or mixed) from each book's opening chapters. For Russian and Ukrainian first-person books it also tells a male narrator from a female one («я пошёл» / «я пошла»).
 - **Finds the same book on different sites** and shares tags between the copies.
 - **Filter and sort by anything**, keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
-- **Downloads** books as **EPUB, FB2 or TXT** for your e-reader.
+- **Downloads** books as **EPUB, FB2 or TXT** for your e-reader. Logged in, downloads include the chapters you bought.
+- **Logs in for you**, and can hand a book to a browser extension such as ExLoader.
+- **18+ books** are collected like any other; one switch hides them.
 
 Everything runs on your own computer. Nothing is uploaded anywhere.
 
@@ -30,6 +32,36 @@ If Windows says "Windows protected your PC", press **More info**, then **Run any
 3. Click a book to see its details. From there you can correct its narration, put it on a shelf or download it.
 
 Collecting runs at a slow, steady pace, about one page every 1–2 seconds per site, so the sites don't ban you. For each book that's about 2–4 pages: the catalog, the book's page, and the opening chapters. Big sites take days to collect fully. Popular books come first, so the library is useful within the first hour. You can close Bookkeeper at any time; it continues where it stopped.
+
+## Logging in
+
+Some sites show 18+ books, or chapters you bought, only to logged-in readers. On the **Sites** page, sites that support it have an **Account** box:
+
+- **Log in…** opens the site's login page in a Waterfox window. Log in as usual: captchas, codes from e-mail and "log in with VK" all work. Bookkeeper keeps the session.
+- **Use my Waterfox login** copies the login from your own Waterfox, if you're already logged in there.
+- **Log in automatically with a saved password** (Author.Today, Rulate, Ficbook): Bookkeeper logs in by itself in a hidden window, and again whenever the login runs out. The password is encrypted with your Windows account and never leaves your computer.
+
+Every 6 hours Bookkeeper checks that each login still works. Logged in, it reads what your account can read: 18+ books, and the chapters you bought, which downloads then include.
+
+| Site | Login |
+|---|---|
+| Author.Today | Window, Waterfox login, or saved password (automatic) |
+| Rulate | Window, Waterfox login, or saved password (automatic) |
+| Ficbook | Window, Waterfox login, or saved password (automatic) |
+| Litnet | Window or Waterfox login (its login has several steps) |
+| RanobeLIB | Window (press «Войти» there) |
+
+## Downloading with a browser extension
+
+Some sites don't let you download even what you bought, but browser extensions can, for example [ExLoader](https://addons.mozilla.org/firefox/addon/exloader/) for Author.Today, Ficbook and Readli. Open a book in Bookkeeper and press **Open in my Waterfox**: the book opens in your normal Waterfox, where your extensions are. Download it with the extension there. For the next 30 minutes Bookkeeper watches your downloads folder; the file appears under the book and on the Downloads page, and a copy is kept in `data\downloads`.
+
+## 18+ books
+
+18+ and 21+ books are collected by default. To keep them out of sight, tick **Hide 18+ books** in the library filters (under **More**); **Only 18+ books** shows just those. A site's own 18+ mark and an 18+ tag both count. Each site's settings still have **Collect 18+ books** if you don't want them in your library at all.
+
+## Waterfox
+
+Bookkeeper uses Waterfox (or Firefox) for logins and site tests when it is installed, and Microsoft Edge otherwise. It runs its own Waterfox profile in `data\browser-profile\waterfox`, so your normal profile, tabs and extensions aren't touched. The choice, the Waterfox program and your downloads folder can be changed on the Sites page under **Browser**. Author.Today chapters are still read through Edge.
 
 ## How narration is detected
 
@@ -62,10 +94,17 @@ You can filter by each of these sources.
 | Wuxia.click | ✅ Working (English translations, with NovelUpdates-style tags) |
 | Wattpad | ✅ Working. Wattpad is too big to collect whole, so Bookkeeper collects the results of your search terms (Sites → Wattpad → Settings) |
 | Kubikus forum | ✅ Working. It adds no books of its own: it reads the recommendation sections and marks the books people recommend, including books that arrive in your library later. Filter with "Only books recommended on forums" |
-| RanobeHub, Ranobes, RuLit, LitMir, Litvek | Coming next |
-| Ficbook, Scribble Hub, WebNovel, FanFiction.net, NovelUpdates, Royal Road | Planned. These sites show a bot check to the test server, so they need a test run from a home computer first |
-| Rulate, RoyalLib, Samlib | Planned. These block or don't answer the test server |
-| Archive of Our Own | Planned, once its maintenance is over |
+| RanobeHub | ✅ Working. Long books get their full chapter list during a download |
+| Ranobes | ✅ Working (with NovelUpdates-style tags in Russian) |
+| Samlib | ✅ Working. Too big to collect whole, so Bookkeeper reads the most-read novel-length works in the genres you choose (Sites → Samlib → Settings) |
+| Rulate | ✅ Working. Logged in, downloads include the paid chapters you bought |
+| Ficbook | ✅ Working. Too big to collect whole, so Bookkeeper reads the catalogs you choose (by default original works); spam posts are skipped. ExLoader can download Ficbook works too |
+| LitMir | ✅ Working (the site-wide list, most popular first) |
+| RuLit | ✅ Working (the site-wide list, most popular first) |
+| RoyalLib | ✅ Working. Downloads use its own FB2 / EPUB / TXT files. It shows a captcha to fast readers, so Bookkeeper reads it slowly and stops if the captcha appears |
+| WebNovel | ✅ Catalog only (titles, tags, ratings). WebNovel protects its chapter text, so there's no narration check or download there |
+| Litvek | Needs another site test |
+| Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, Archive of Our Own | Show a bot check; the site test now opens Waterfox so you can pass it |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
 
@@ -75,7 +114,7 @@ Some sites block the server Bookkeeper was built on, so their connectors need pa
 
 1. On the **Sites** page, in **Coming next**, press **Test from this computer** next to a site.
 2. Bookkeeper slowly opens a few of that site's pages: home, catalog, one book, one chapter.
-3. If a page shows an "are you human?" check, a normal Microsoft Edge window opens. Complete the check yourself, and the test continues.
+3. If a page shows an "are you human?" check, a Waterfox window opens (Edge if Waterfox isn't installed). Complete the check yourself and keep the window open until the page has loaded; the test then continues.
 4. Press **Download the test ZIP** and send the file to whoever is writing the connector.
 
 The ZIP contains only those pages as the site showed them, plus a short report.
@@ -97,7 +136,8 @@ Everything personal lives in the `data` folder next to `Bookkeeper.bat`:
 - `library.db`: your library, shelves and notes;
 - `downloads\`: books you downloaded;
 - `logs\`: what Bookkeeper did, useful if something goes wrong;
-- `browser-profile\`: the browser profile Bookkeeper uses for Author.Today.
+- `browser-profile\`: the browser profiles Bookkeeper uses for logins, site tests and Author.Today;
+- `accounts\`: your logins and saved passwords, encrypted with your Windows account.
 
 To back up, copy the `data` folder.
 
@@ -107,11 +147,13 @@ Download the new ZIP and unpack it over the old folder. Your `data` folder is ke
 
 ## Fair use
 
-Bookkeeper is for your personal reading. It only reads what the sites show to any visitor: free chapters. Logging in to download chapters you bought isn't supported yet. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
+Bookkeeper is for your personal reading. It reads what the sites show to any visitor, or, when you log in, what your account can read, including chapters you bought. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
 
 ## Troubleshooting
 
 - **"No usable browser found"** on the Author.Today card: Bookkeeper needs Microsoft Edge (built into Windows) or Google Chrome.
+- **Waterfox isn't found**: enter the path to `waterfox.exe` on the Sites page under **Browser**.
+- **A login doesn't work**: press **Log in…** and log in yourself in the window; the Account box shows what went wrong.
 - **A site shows "Blocked"**: check that the site opens in your normal browser, then press **Try again** on its card. If it's blocked all the time, raise the pause between requests in that site's settings.
 - **Nothing happens when I start it a second time**: Bookkeeper is already running, and the second start just opens the page again.
 - Anything else: look in `data\logs\bookkeeper.log`.
@@ -129,7 +171,10 @@ Code layout (`src/bookkeeper/`):
 
 - `sites/`: one connector per site. Each one implements `discover`, `details`, `chapters` and `chapter_text`.
 - `analysis/pov.py`: the narration detector.
-- `tags.py`: the shared tag list, synonyms and rules.
+- `tags.py`, `tagdata.py`: the shared tag list (English, Russian and Ukrainian names), synonyms and rules.
+- `browser.py`: Waterfox (WebDriver BiDi) and Edge (Playwright).
+- `accounts.py`, `secret.py`: logins, saved passwords and sessions (encrypted with Windows DPAPI).
+- `handoff.py`: picking up books downloaded with a browser extension.
 - `matching.py`: matching the same book across sites.
 - `crawler.py`: the background workers.
 - `export.py`: TXT, FB2 and EPUB files.

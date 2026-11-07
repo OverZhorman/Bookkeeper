@@ -62,7 +62,7 @@ const results = { books: [], total: 0, page: 0, loading: false, done: false, tok
 let pollTimer = null;
 
 const siteName = (id) => (meta.sites[id] && meta.sites[id].name) || id;
-const tagLabel = (t) => (tagLang === "ru" && t.label_ru) ? t.label_ru : t.label;
+const tagLabel = (t) => (tagLang === "ru" && t.label_ru) ? t.label_ru : (tagLang === "uk" && (t.label_uk || t.label_ru)) ? (t.label_uk || t.label_ru) : t.label;
 
 // ---------- theme ----------
 function applyTheme() {
@@ -203,9 +203,12 @@ async function renderFilters() {
 
   groups.push(fgroup("More", h("div", {},
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: (filters.dedupe ?? "1") !== "0", onchange: (e) => updateFilter("dedupe", e.target.checked ? "" : "0") }), "Show each book once (merge copies on different sites)"),
-    h("label", { class: "check" }, h("input", { type: "checkbox", checked: filters.adult === "1", onchange: (e) => updateFilter("adult", e.target.checked ? "1" : "") }), "Include 18+ books"),
+    h("label", { class: "check", title: "Saved for next time. 18+ books are collected either way." }, h("input", { type: "checkbox", checked: !!meta.hide_adult, onchange: async (e) => { meta.hide_adult = e.target.checked; await api.post("/api/settings", { hide_adult: e.target.checked }); setFilters({ ...filters, adult: "" }); renderLibrary(); } }), "Hide 18+ books"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: filters.adult === "only", onchange: (e) => updateFilter("adult", e.target.checked ? "only" : "") }), "Only 18+ books"),
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: filters.recommended === "1", onchange: (e) => updateFilter("recommended", e.target.checked ? "1" : "") }), "Only books recommended on forums"),
-    h("label", { class: "check" }, h("input", { type: "checkbox", checked: tagLang === "ru", onchange: (e) => { tagLang = e.target.checked ? "ru" : "en"; store.set("tagLang", tagLang); renderLibrary(); } }), "Show tag names in Russian"))));
+    h("div", { class: "field" }, h("label", {}, "Tag names in"),
+      h("div", { class: "chips" }, [["en", "English"], ["ru", "Русский"], ["uk", "Українська"]].map(([k, l]) =>
+        chip(l, tagLang === k, () => { tagLang = k; store.set("tagLang", k); renderLibrary(); })))))));
 
   el.replaceChildren(...groups);
 }
@@ -357,7 +360,7 @@ function siteBadges(b) {
 }
 function renderCard(b) {
   const c = coverEl(b);
-  c.append(h("div", { class: "badges" }, povBadge(b.pov, b.pov_source)));
+  c.append(h("div", { class: "badges" }, povBadge(b.pov, b.pov_source), b.adult ? h("span", { class: "adult-badge", title: "18+" }, "18+") : null));
   if (b.favorite) c.append(h("span", { class: "fav" }, "★"));
   return h("article", { class: "card", onclick: () => setFilters({ ...filters, book: b.id }, true) },
     c,
@@ -372,7 +375,7 @@ function renderRow(b) {
     coverEl(b),
     h("div", {},
       h("div", { class: "title" }, b.title, b.favorite ? " ★" : ""),
-      h("div", { class: "line" }, h("span", { class: "muted" }, (b.authors || []).join(", ")), povBadge(b.pov, b.pov_source), siteBadges(b),
+      h("div", { class: "line" }, h("span", { class: "muted" }, (b.authors || []).join(", ")), povBadge(b.pov, b.pov_source), b.adult ? h("span", { class: "adult-badge" }, "18+") : null, siteBadges(b),
         b.shelf ? h("span", { class: "pill" }, SHELVES[b.shelf] || b.shelf) : null),
       h("div", { class: "line" }, (b.tags || []).slice(0, 10).map(tagMini)),
       h("div", { class: "snippet" }, b.snippet || ""),
@@ -416,7 +419,7 @@ async function refreshBook(id) {
   if (drawerBook !== id) return;
   renderBook(d);
   clearInterval(drawerTimer);
-  if (d.queued || d.downloads.some((x) => x.state === "queued" || x.state === "running")) drawerTimer = setInterval(() => refreshBook(id), 2500);
+  if (d.queued || d.handoff || d.downloads.some((x) => x.state === "queued" || x.state === "running")) drawerTimer = setInterval(() => refreshBook(id), 2500);
 }
 
 function narrationBox(d) {
@@ -453,7 +456,9 @@ function renderBook(d) {
 
   const dl = (fmt) => async () => { await api.post("/api/downloads", { book_id: d.id, fmt }); toast(`${fmt.toUpperCase()} download started`); refreshBook(d.id); };
   const downloads = h("div", {},
-    h("div", { class: "shelf" }, ["epub", "fb2", "txt"].map((f) => h("button", { class: "btn small", onclick: dl(f) }, `⬇ ${f.toUpperCase()}`))),
+    d.has_text === false
+      ? h("div", { class: "faint", style: { fontSize: "12.5px" } }, `${siteName(d.site)} protects its chapter text, so Bookkeeper can't make a file from it. Read it on the site, or use a browser extension below.`)
+      : h("div", { class: "shelf" }, ["epub", "fb2", "txt"].map((f) => h("button", { class: "btn small", onclick: dl(f) }, `⬇ ${f.toUpperCase()}`))),
     d.downloads.length ? h("div", { style: { marginTop: "10px", display: "grid", gap: "6px" } }, d.downloads.slice(0, 4).map(downloadLine)) : null);
 
   const byCat = {};
@@ -496,13 +501,39 @@ function renderBook(d) {
     h("div", { class: "section" }, h("h3", {}, "Narration"), narrationBox(d)),
     h("div", { class: "section" }, h("h3", {}, "My shelves"), shelfBtns),
     h("div", { class: "section" }, h("h3", {}, "Download for your e-reader"), downloads,
-      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, "Downloads include the free chapters. Paid chapters are skipped (logging in isn't supported yet).")),
+      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, d.logged_in
+        ? "You're logged in on this site: downloads include every chapter your account can read, including ones you bought."
+        : d.can_login ? "Downloads include the free chapters. Log in on the Sites page to include chapters you bought."
+        : "Downloads include the chapters the site shows to every visitor."),
+      handoffBox(d)),
     d.description ? h("div", { class: "section" }, h("h3", {}, "Description"), h("div", { class: "desc" }, d.description)) : null,
     h("div", { class: "section" }, h("h3", {}, "Tags"), tagSections.length ? tagSections : h("p", { class: "muted" }, "No tags yet."),
       h("div", { class: "legend" }, h("span", {}, "solid: written on the site"), h("span", {}, "dashed: added by Bookkeeper (rules, text, other copies)"))),
     h("div", { class: "section" }, h("h3", {}, "Details"), h("div", { class: "facts" }, facts.map(([k, v]) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, String(v)))))),
     d.recommendations.length ? h("div", { class: "section" }, h("h3", {}, "Recommended on forums"), h("ul", {}, d.recommendations.map((r) => h("li", {}, h("a", { href: r.post_url, target: "_blank" }, `${r.source}${r.at ? ", " + fmtDate(r.at) : ""}`))))) : null,
     h("div", { class: "section" }, h("h3", {}, "My notes"), note));
+}
+
+function handoffBox(d) {
+  const ext = (d.extension_downloads || []).join(", ");
+  const box = h("div", { class: "handoff" });
+  if (d.handoff) {
+    const mins = Math.ceil(d.handoff.seconds_left / 60);
+    box.append(h("div", { class: "activity" }, h("span", { class: "dot on" }),
+      `Opened in ${d.handoff.browser}. Download the book there; Bookkeeper picks up the file from `, h("span", { class: "mono" }, d.handoff.folder), ` (waiting ${mins} more min).`),
+      h("button", { class: "btn small ghost", onclick: async () => { await api.del(`/api/books/${d.id}/handoff`); refreshBook(d.id); } }, "Stop waiting"));
+  } else {
+    box.append(h("button", { class: "btn small", title: "Opens this book in your own Waterfox, where your extensions are",
+      onclick: async () => {
+        try { await api.post(`/api/books/${d.id}/handoff`); toast("Opened in your browser — download the book there"); }
+        catch (e) { toast(String(e.message || e)); }
+        refreshBook(d.id);
+      } }, "Open in my Waterfox to download with an extension"),
+      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "4px" } },
+        ext ? `${ext} can download this site's books (also chapters Bookkeeper can't save). ` : "For sites where a browser extension (for example ExLoader) can download books. ",
+        "The file you save there appears here and on the Downloads page."));
+  }
+  return box;
 }
 
 function downloadLine(x) {
@@ -519,7 +550,9 @@ async function renderSites() {
   const app = $("#app");
   app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "Sites"),
     h("p", { class: "lead" }, "Switch on the sites you want in your library. Bookkeeper reads each one slowly in the background (by default about one page every 1–2 seconds, so you don't get banned): first the catalog, then each book's details, then the opening chapters to check the narration. You can keep using the app while it works."),
+    h("div", { id: "browserbox" }),
     h("div", { class: "sites", id: "sitecards" }), h("div", { class: "planned", id: "planned" })));
+  drawBrowserBox();
   await drawSites(true);
   pollTimer = setInterval(() => drawSites(false), 3000);
 }
@@ -537,7 +570,7 @@ async function drawSites(first) {
       h("h2", { style: { fontSize: "17px", margin: "0 0 4px" } }, "Coming next"),
       h("p", { class: "muted", style: { margin: "0 0 10px", maxWidth: "820px" } },
         "These sites from your list don't have a connector yet. Several of them block the server Bookkeeper was built on, but they probably work from your computer. ",
-        h("b", {}, "Test from this computer"), " visits a few pages of the site slowly (home, catalog, one book, one chapter) and saves what it sees into a ZIP file. Send that ZIP to finish the site's connector. If a page shows an “are you human?” check, a normal Edge window opens so you can complete it yourself."),
+        h("b", {}, "Test from this computer"), " visits a few pages of the site slowly (home, catalog, one book, one chapter) and saves what it sees into a ZIP file. Send that ZIP to finish the site's connector. If a page shows an “are you human?” check, a normal Waterfox window (or Edge, if Waterfox is not installed) opens so you can complete it yourself."),
       h("table", {}, h("tr", {}, h("th", {}, "Site"), h("th", {}, "Status"), h("th", {}, "Test")),
         data.planned.map((p) => h("tr", {}, h("td", {}, h("a", { href: p.home, target: "_blank" }, p.name)), h("td", { class: "muted" }, p.reason),
           h("td", { id: `test-${p.id}`, style: { minWidth: "260px" } }, testCell(p.id))))),
@@ -585,7 +618,7 @@ function siteCard(s) {
         h("input", { class: "input", type: "number", min: 0.5, max: 30, step: 0.5, value: settings.min_interval || s.default_interval,
           onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { min_interval: +e.target.value }); toast("Saved"); } })),
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: settings.analyze !== false, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { analyze: e.target.checked }); toast("Saved"); } }), "Check narration of each book (reads its opening chapters)"),
-      h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!settings.include_adult, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { include_adult: e.target.checked }); toast("Saved"); } }), "Include 18+ books"),
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!settings.include_adult, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { include_adult: e.target.checked }); toast("Saved"); } }), "Collect 18+ books (you can hide them in the library)"),
       Object.entries(s.extra_settings || {}).map(([key, def]) => h("div", { class: "field" }, h("label", {}, def.label),
         h("textarea", { class: "note", style: { minHeight: "54px" }, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { [key]: e.target.value }); toast("Saved — collecting with the new settings"); } },
           settings[key] ?? def.default)))));
@@ -607,7 +640,69 @@ function siteCard(s) {
     s.status_msg ? h("div", { class: "errbox" }, s.status_msg, " ", h("button", { class: "btn small", onclick: async () => { await api.post(`/api/sites/${s.id}/retry`); toast("Trying again"); } }, "Try again")) : null,
     live.browser_error ? h("div", { class: "errbox" }, `Narration checks are off for this site: ${live.browser_error}`) : null,
     h("div", { class: "note" }, s.note),
+    accountBox(s),
     det);
+}
+
+let openAccount = new Set();
+function accountBox(s) {
+  const a = s.account;
+  if (!a) return null;
+  const act = (action, msg) => async () => {
+    try { await api.post(`/api/sites/${s.id}/account`, { action }); toast(msg); } catch (e) { toast(String(e.message || e)); }
+    drawSites(false);
+  };
+  const who = a.logged_in ? `Logged in${a.user ? ` as ${a.user}` : ""}${a.how === "waterfox" ? " (copied from your Waterfox)" : a.how === "auto" ? " (automatically)" : ""}` : "Not logged in";
+  const busy = a.state === "working";
+  const buttons = h("div", { class: "shelf", style: { marginTop: "6px" } },
+    h("button", { class: "btn small primary", disabled: busy, title: "Opens the site's login page in a browser window. Log in there as usual.", onclick: act("login", "A browser window is opening — log in there") }, a.logged_in ? "Log in again…" : "Log in…"),
+    a.user_waterfox ? h("button", { class: "btn small", disabled: busy, title: "If you're already logged in to this site in your own Waterfox, Bookkeeper copies that login", onclick: act("import", "Copying your Waterfox login…") }, "Use my Waterfox login") : null,
+    a.logged_in ? h("button", { class: "btn small ghost", disabled: busy, onclick: act("check", "Checking the login…") }, "Check") : null,
+    a.logged_in ? h("button", { class: "btn small ghost danger", disabled: busy, onclick: act("logout", "Logged out") }, "Log out") : null);
+  const parts = [h("div", {}, h("b", {}, "Account: "), who), a.why ? h("div", { class: "faint", style: { fontSize: "12px" } }, `Logging in gives you: ${a.why}`) : null, buttons];
+  if (a.message) parts.push(h("div", { class: ["failed", "needed"].includes(a.state) ? "errbox" : "activity" }, busy ? h("span", { class: "dot on" }) : null, a.message));
+  if (s.login_autofill && a.can_save_password) {
+    const login = h("input", { class: "input", placeholder: "Login, e-mail or phone", value: a.saved_login || "", autocomplete: "off" });
+    const pwd = h("input", { class: "input", type: "password", placeholder: a.has_password ? "Saved (leave empty to keep it)" : "Password", autocomplete: "new-password" });
+    const auto = h("input", { type: "checkbox", checked: a.auto_pref !== false });
+    parts.push(h("details", { class: "settings", open: openAccount.has(s.id), ontoggle: (e) => e.target.open ? openAccount.add(s.id) : openAccount.delete(s.id) },
+      h("summary", {}, a.has_password ? "Automatic login: on" : "Log in automatically with a saved password"),
+      h("div", { class: "body" },
+        h("div", { class: "faint", style: { fontSize: "12px" } }, "Bookkeeper logs in by itself in a hidden window, and again whenever the login runs out. The password is encrypted with your Windows account and stays on this computer."),
+        h("div", { class: "row2" }, login, pwd),
+        h("label", { class: "check" }, auto, "Log in again by itself when the login runs out"),
+        h("div", { class: "shelf" },
+          h("button", { class: "btn small primary", onclick: async () => {
+            if (!login.value.trim()) { toast("Enter your login first"); return; }
+            try { await api.post(`/api/sites/${s.id}/credentials`, { login: login.value, password: pwd.value, auto: auto.checked }); toast("Saved — logging in…"); }
+            catch (e) { toast(String(e.message || e)); }
+            pwd.value = ""; drawSites(false);
+          } }, "Save and log in"),
+          a.saved_login ? h("button", { class: "btn small ghost danger", onclick: async () => { await api.post(`/api/sites/${s.id}/credentials`, { forget: true }); toast("Saved login and password removed"); drawSites(false); } }, "Forget saved password") : null))));
+  } else if (!s.login_autofill) {
+    parts.push(h("div", { class: "faint", style: { fontSize: "12px", marginTop: "4px" } }, "Bookkeeper can't fill in this site's login form for you, so log in yourself once with “Log in…” (or copy your Waterfox login). Bookkeeper keeps the session."));
+  }
+  return h("div", { class: "account" }, parts);
+}
+
+async function drawBrowserBox() {
+  const el = $("#browserbox");
+  if (!el) return;
+  let st;
+  try { st = await api.get("/api/settings"); } catch { return; }
+  const save = async (key, value) => { await api.post("/api/settings", { [key]: value }); toast("Saved"); drawBrowserBox(); };
+  const d = st.detected || {};
+  el.replaceChildren(h("details", { class: "settings browserbox", open: store.get("browserBoxOpen", false), ontoggle: (e) => store.set("browserBoxOpen", e.target.open) },
+    h("summary", {}, `Browser: ${d.engine}`, d.waterfox ? "" : " (Waterfox not found)"),
+    h("div", { class: "body" },
+      h("div", { class: "field" }, h("label", {}, "Browser for logins and site tests"),
+        h("select", { class: "input", onchange: (e) => save("browser", e.target.value) },
+          [["auto", "Waterfox when installed, otherwise Edge"], ["waterfox", "Waterfox (or Firefox)"], ["edge", "Microsoft Edge"]].map(([v, l]) => h("option", { value: v, selected: (st.browser || "auto") === v }, l)))),
+      h("div", { class: "field" }, h("label", {}, "Waterfox program (leave empty to find it by itself)"),
+        h("input", { class: "input", placeholder: d.waterfox || String.raw`C:\Program Files\Waterfox\waterfox.exe`, value: st.waterfox_path || "", onchange: (e) => save("waterfox_path", e.target.value) })),
+      h("div", { class: "field" }, h("label", {}, "Folder your Waterfox saves downloads to (for books downloaded with an extension)"),
+        h("input", { class: "input", placeholder: d.downloads_dir || "", value: st.browser_downloads_dir || "", onchange: (e) => save("browser_downloads_dir", e.target.value) })),
+      h("div", { class: "faint", style: { fontSize: "12px" } }, "Logins and site tests use their own Waterfox profile in Bookkeeper's data folder; your normal Waterfox profile isn't changed. Author.Today chapters are read through Microsoft Edge."))));
 }
 
 // ---------- downloads page ----------
@@ -648,17 +743,25 @@ function renderHelp() {
       h("div", { class: "help-card" }, h("h2", {}, "Your own tag rules"),
         h("p", {}, "Open ", h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), " in Notepad. You can map site labels to tags and add rules like “harem → romance”. Then press “Re-apply my tag rules” on the Sites page.")),
       h("div", { class: "help-card" }, h("h2", {}, "Your data"),
-        h("p", {}, "Everything lives in ", h("span", { class: "mono" }, meta.data_dir || "data"), ": the library database, downloads, logs and the browser profile used for Author.Today. Copy that folder to back it up.")),
+        h("p", {}, "Everything lives in ", h("span", { class: "mono" }, meta.data_dir || "data"), ": the library database, downloads, logs, browser profiles and your saved logins (encrypted, in accounts). Copy that folder to back it up.")),
       h("div", { class: "help-card" }, h("h2", {}, "Being polite to the sites"),
         h("p", {}, "Each site gets its own slow, steady pace. If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and tells you on the Sites page instead of retrying over and over.")),
-      h("div", { class: "help-card" }, h("h2", {}, "Paid chapters"),
-        h("p", {}, "Bookkeeper only reads what the site shows to any visitor: free chapters. Logging in to download bought chapters isn't supported yet. The narration check only needs the first few chapters, which are almost always free.")))));
+      h("div", { class: "help-card" }, h("h2", {}, "Logging in"),
+        h("p", {}, "On the Sites page, sites with an account box can be logged in to. ", h("b", {}, "Log in…"), " opens the site's login page in a Waterfox window: log in as usual (captchas and e-mail codes work). ",
+          h("b", {}, "Use my Waterfox login"), " copies the login from your own Waterfox if you're already logged in there."),
+        h("p", {}, "On Author.Today, Rulate and Ficbook you can also save your login and password: Bookkeeper then logs in by itself, and again whenever the login runs out. The password is encrypted with your Windows account."),
+        h("p", {}, "Logged in, Bookkeeper sees what your account sees: 18+ books and the chapters you bought, which downloads then include.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Downloading with a browser extension"),
+        h("p", {}, "Some sites don't let you download even what you bought, but extensions such as ExLoader can. Open a book and press ", h("b", {}, "Open in my Waterfox"), ": the book opens in your normal Waterfox, where your extensions are. Download it with the extension, and Bookkeeper picks up the file from your downloads folder and lists it under the book.")),
+      h("div", { class: "help-card" }, h("h2", {}, "18+ books"),
+        h("p", {}, "18+ and 21+ books are collected like any other. To keep them out of sight, tick ", h("b", {}, "Hide 18+ books"), " in the library filters (under More). Some sites only show them to logged-in readers.")))));
 }
 
 // ---------- start ----------
 async function boot() {
   try {
     meta = await api.get("/api/meta");
+    $("#app-version").textContent = meta.version ? `v${meta.version}` : "";
     const s = await api.get("/api/sites");
     siteCounts = Object.fromEntries(s.sites.map((x) => [x.id, x.counts]));
   } catch (e) { console.error(e); }

@@ -5,7 +5,7 @@ pages seen on your computer. A test visits a few pages of a site (home, catalog,
 slowly, the way your browser would, and saves what it saw into data/diagnostics/<site>.zip.
 Send that ZIP to whoever is writing the connector.
 
-If a page shows a bot check, the test can open it in a normal, visible Microsoft Edge window, so that you can
+If a page shows a bot check, the test can open it in a normal, visible Waterfox window (Edge if Waterfox is not installed), so that you can
 pass the check yourself, and saves the page once it has loaded."""
 import json
 import re
@@ -22,7 +22,7 @@ from .http import Blocked, Http, looks_like_bot_check
 STEPS: dict[str, list[dict]] = {
     "ficbook": [
         {"label": "home", "url": "https://ficbook.net/"},
-        {"label": "catalog", "url": "https://ficbook.net/fanfiction/no_fandom/originals?p=1"},
+        {"label": "catalog", "url": "https://ficbook.net/popular-fanfics-376846"},
         {"label": "book", "from": "catalog", "pattern": r'href="(/readfic/[^"#?]+)"'},
         {"label": "chapter", "from": "book", "pattern": r'href="(/readfic/[^"#?]+/\d+)[#"]'},
     ],
@@ -35,8 +35,8 @@ STEPS: dict[str, list[dict]] = {
     "webnovel": [
         {"label": "home", "url": "https://www.webnovel.com/"},
         {"label": "catalog", "url": "https://www.webnovel.com/stories/novel?orderBy=1"},
-        {"label": "book", "from": "catalog", "pattern": r'href="(/book/[^"]+_\d+)"'},
-        {"label": "chapter", "from": "book", "pattern": r'href="(/book/[^"/]+_\d+/[^"/]+_\d+)"'},
+        {"label": "book", "from": "catalog", "pattern": r'href="(/(?:ru/)?book/[^"/]+_\d+)"'},
+        {"label": "chapter", "from": "book", "pattern": r'href="(/(?:ru/)?book/[^"/]+_\d+/[^"/]+_\d+)"'},
     ],
     "fanfiction": [
         {"label": "home", "url": "https://www.fanfiction.net/"},
@@ -56,9 +56,9 @@ STEPS: dict[str, list[dict]] = {
     ],
     "rulate": [
         {"label": "home", "url": "https://tl.rulate.ru/"},
-        {"label": "catalog", "url": "https://tl.rulate.ru/search?t=&sort=4&adult=0"},
-        {"label": "book", "from": "catalog", "pattern": r'href="(/book/\d+)"'},
-        {"label": "chapter", "from": "book", "pattern": r'href="(/book/\d+/\d+(?:/ready)?)"'},
+        {"label": "catalog", "url": "https://tl.rulate.ru/search?t=&sort=4"},
+        {"label": "book", "from": "catalog", "pattern": r'href="((?:https://tl\.rulate\.ru)?/book/\d+)"'},
+        {"label": "chapter", "from": "book", "pattern": r'href="((?:https://tl\.rulate\.ru)?/book/\d+/\d+(?:/ready)?)"'},
     ],
     "royallib": [
         {"label": "home", "url": "https://royallib.com/"},
@@ -205,23 +205,14 @@ def _run(site_id: str, allow_browser: bool):
                 pass
 
 
-def _browser_page(browser, url: str, wait_seconds: int = 90) -> str | None:
+def _browser_page(browser, url: str, wait_seconds: int = 120) -> str | None:
     """Open a page in a visible window and return its HTML once real content (not a check page) is showing."""
-    if browser._ctx is None:
-        browser._start()
-    page = browser._ctx.new_page()
+    from .browser import BrowserClosed
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        deadline = time.time() + wait_seconds
-        while time.time() < deadline:
-            title = page.title() or ""
-            text_len = page.evaluate("() => document.body ? document.body.innerText.length : 0")
-            if text_len > 1500 and not re.search(r"just a moment|attention required|проверка|checking", title, re.I):
-                return page.content()
-            time.sleep(2)
-        return None
-    finally:
-        page.close()
+        return browser.page_html(url, wait_seconds)
+    except BrowserClosed:
+        raise RuntimeError("the browser window was closed before the check was completed. Keep it open until "
+                           "the page has loaded")
 
 
 def zip_file(site_id: str):

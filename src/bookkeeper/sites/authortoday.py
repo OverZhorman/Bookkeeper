@@ -79,6 +79,21 @@ class AuthorToday(Site):
     needs_browser_for_text = True
     note = ("Tags come from each book's page. Chapter text is read through Microsoft Edge on your computer, "
             "because the site scrambles it for anything that isn't a browser.")
+    lists_adult = True
+    extension_downloads = ("ExLoader",)
+    login_url = f"{BASE}/account/login"
+    login_benefit = ("18+ books, and the chapters you bought: Bookkeeper's downloads then include them "
+                     "(only what your account can read).")
+    login_form = {"user": "#Login", "password": "#Password, input[name=Password]"}
+    logged_in_js = r"/isAuthenticated:\s*true/.test(document.documentElement.innerHTML)"
+
+    def check_login(self) -> bool | None:
+        page = self.http.get(f"{BASE}/").text
+        if re.search(r"isAuthenticated:\s*true", page):
+            return True
+        if re.search(r"isAuthenticated:\s*false", page):
+            return False
+        return None
 
     def _card(self, block: str) -> BookInfo | None:
         m = re.search(r'href="/work/(\d+)"', block)

@@ -54,3 +54,31 @@ def detect_lang(text: str) -> str:
 
 def word_count(text: str) -> int:
     return len(re.findall(r"\w+", text))
+
+
+def opening_pieces(text: str, enough_words: int = 6000, pieces: int = 3, skip_lines=None) -> list[str]:
+    """The opening ~enough_words of a whole book, in a few even pieces (for the narration check, chapter breaks
+    don't matter). Short lines before the text starts (title, epigraph, headings) are skipped, and so are lines
+    matching `skip_lines` (a site's own notices)."""
+    picked, words = [], 0
+    for line in text.split("\n"):
+        if skip_lines is not None and skip_lines.search(line):
+            continue
+        if not picked and len(line.split()) < 4:
+            continue
+        picked.append(line)
+        words += len(line.split())
+        if words >= enough_words:
+            break
+    if words < 300:
+        return []
+    out, chunk, chunk_words, size = [], [], 0, max(1, words // pieces)
+    for line in picked:
+        chunk.append(line)
+        chunk_words += len(line.split())
+        if chunk_words >= size and len(out) < pieces - 1:
+            out.append("\n".join(chunk))
+            chunk, chunk_words = [], 0
+    if chunk:
+        out.append("\n".join(chunk))
+    return out

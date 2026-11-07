@@ -72,8 +72,8 @@ def _ensure_tag(c, tag: str, raw: str | None):
     known = T.is_known(tag)
     i = T.info(tag)
     label = i["label"] if known else (raw or tag).strip()
-    c.execute("INSERT OR IGNORE INTO tags(id, label, label_ru, category, known) VALUES(?,?,?,?,?)",
-              (tag, label, i.get("label_ru"), i.get("category") or "other", int(known)))
+    c.execute("INSERT OR IGNORE INTO tags(id, label, label_ru, label_uk, category, known) VALUES(?,?,?,?,?,?)",
+              (tag, label, i.get("label_ru"), i.get("label_uk"), i.get("category") or "other", int(known)))
     _existing_tags.add(tag)
 
 
@@ -207,6 +207,17 @@ def reapply_all_tags(progress=None):
     with db.transaction() as tc:  # labels for tags that became known
         for tid in T.TAGS:
             i = T.info(tid)
-            tc.execute("UPDATE tags SET label=?, label_ru=?, category=?, known=1 WHERE id=?",
-                       (i["label"], i.get("label_ru"), i.get("category"), tid))
+            tc.execute("UPDATE tags SET label=?, label_ru=?, label_uk=?, category=?, known=1 WHERE id=?",
+                       (i["label"], i.get("label_ru"), i.get("label_uk"), i.get("category"), tid))
+        # labels that now map to a shared tag leave their old one-off tags behind
+        tc.execute("DELETE FROM tags WHERE known=0 AND id NOT IN (SELECT DISTINCT tag FROM book_tags)")
     refresh_tag_counts()
+    db.set_setting("tags_version", T.TAGS_VERSION)
+
+
+def retag_if_needed() -> bool:
+    """After an update that changed the built-in tag list: map every book's site labels again (in the background)."""
+    if db.get_setting("tags_version", 1) == T.TAGS_VERSION:
+        return False
+    reapply_all_tags()
+    return True

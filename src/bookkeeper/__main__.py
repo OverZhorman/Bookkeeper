@@ -45,7 +45,7 @@ def main():
     from .web.app import create_app
     manager = Manager()
     manager.start()
-    app = create_app(manager)
+    app = create_app(manager, lan=args.host not in ("127.0.0.1", "localhost", "::1"))
 
     print(f"\n  Bookkeeper {__version__} is running.\n"
           f"  Open {url} in your browser (it should open by itself).\n"

@@ -8,11 +8,13 @@ Each site worker repeats, in order of priority:
   5. narration analysis of the opening chapters, most popular first
 All requests to a site go through that site's polite HTTP client, so the pace is the same whatever it's doing."""
 import logging
+import queue
+import shutil
 import threading
 import time
 import traceback
 
-from . import db, library, matching
+from . import accounts, config, db, library, matching
 from .analysis.pov import analyse
 from .browser import Browser, BrowserUnavailable
 from .db import jdump, jload, now
@@ -27,8 +29,10 @@ def _hours_ago(hours: float) -> str:
     from datetime import datetime, timedelta, timezone
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-DEFAULTS = {"min_interval": None, "analyze": True, "include_adult": False, "details_per_cycle": 10,
+# 18+ books are collected by default; the library can hide them (Library -> More -> Hide 18+ books).
+DEFAULTS = {"min_interval": None, "analyze": True, "include_adult": True, "details_per_cycle": 10,
             "analysis_per_cycle": 4, "pass_interval_hours": 12}
+ACCOUNT_CHECK_HOURS = 6
 
 
 def site_settings(site_id: str) -> dict:
@@ -52,13 +56,18 @@ class SiteWorker(threading.Thread):
         self.gen = None
         self.state: dict = {}
         self.browser_error: str | None = None
+        self.commands: queue.Queue = queue.Queue()   # account actions from the Sites page
+        self._next_account_check = time.time() + 20
 
     # ---------- helpers ----------
     def _setup(self):
         s = site_settings(self.site_id)
         self.http = Http(self.site_id, min_interval=s["min_interval"] or self.cls.min_interval, stop=self.stop)
-        self.browser = Browser(self.site_id) if self.cls.needs_browser_for_text else None
+        # Author.Today chapters are read through Edge (Waterfox is used for logins and site tests).
+        self.browser = Browser(self.site_id, engine="edge") if self.cls.needs_browser_for_text else None
         self.site = self.cls(self.http, s, self.browser)
+        if self.cls.login_url and accounts.apply(self.site, self.http) and self.browser:
+            self.browser.initial_cookies = (accounts.session(self.site_id) or {}).get("cookies") or []
         row = db.conn().execute("SELECT state FROM sites WHERE id=?", (self.site_id,)).fetchone()
         self.state = jload(row["state"], {}) if row else {}
 
@@ -112,6 +121,8 @@ class SiteWorker(threading.Thread):
                 pass
 
     def cycle(self) -> bool:
+        if self._account_step():
+            return True
         if self._download_step():
             return True
         if self._queued_analysis_step():
@@ -122,9 +133,93 @@ class SiteWorker(threading.Thread):
         self._status("running")
         did = self._discovery_step(settings)
         did = self._details_step(settings) or did
-        if settings["analyze"]:
+        if settings["analyze"] and self.cls.has_text:
             did = self._analysis_step(settings) or did
         return did
+
+    # ---------- account ----------
+    def _account_due(self) -> str | None:
+        """Every few hours: is the login still valid? Log in again by itself if a password is saved."""
+        if not self.cls.login_url or time.time() < self._next_account_check:
+            return None
+        self._next_account_check = time.time() + ACCOUNT_CHECK_HOURS * 3600
+        creds = accounts.credentials(self.site_id) or {}
+        auto = bool(creds.get("password")) and self.cls.login_autofill and \
+            (db.get_setting(f"account:{self.site_id}", {}) or {}).get("auto", True)
+        if not accounts.session(self.site_id):
+            return "auto-login" if auto else None
+        return "check"
+
+    def _account_step(self) -> bool:
+        try:
+            action = self.commands.get_nowait()
+        except queue.Empty:
+            action = self._account_due()
+        if not action:
+            return False
+        sid, cls = self.site_id, self.cls
+        report = lambda msg: accounts.set_state(sid, state="working", message=msg)  # noqa: E731
+        had_session = bool(accounts.session(sid))
+        try:
+            if action in ("login", "auto-login"):
+                self.activity = "logging in"
+                report("Opening the login page in Waterfox…" if action == "login" else "Logging in…")
+                if self.browser:
+                    self.browser.close()  # one browser per profile at a time
+                data = accounts.login_in_browser(cls, interactive=action == "login", report=report)
+                self._use_session(data, had_session)
+            elif action == "import":
+                self.activity = "copying your Waterfox login"
+                self._use_session(accounts.import_from_user_waterfox(cls), had_session)
+            elif action == "logout":
+                accounts.forget_session(sid)
+                accounts.clear_applied(self.site, self.http)
+                if self.browser:
+                    self.browser.close()
+                    self.browser.initial_cookies = []
+                for profile in (config.BROWSER_PROFILE_DIR / "waterfox" / sid, config.BROWSER_PROFILE_DIR / sid):
+                    shutil.rmtree(profile, ignore_errors=True)
+                accounts.set_state(sid, state=None, message="Logged out.", checked_at=now())
+            elif action == "check":
+                self.activity = "checking the login"
+                ok = self.site.check_login()
+                if ok is False:
+                    creds = accounts.credentials(sid) or {}
+                    if creds.get("password") and cls.login_autofill:
+                        report("The login ran out. Logging in again…")
+                        if self.browser:
+                            self.browser.close()
+                        self._use_session(accounts.login_in_browser(cls, interactive=False, report=report), True)
+                    else:
+                        accounts.set_state(sid, state="needed", checked_at=now(),
+                                           message="The login has run out. Press “Log in…” to log in again.")
+                elif ok:
+                    accounts.set_state(sid, state="ok", message=None, checked_at=now())
+        except (Blocked, Stopped):
+            raise
+        except Exception as e:
+            log.warning("%s account %s failed: %s", sid, action, e)
+            accounts.set_state(sid, state="failed", message=f"Couldn't log in: {e}", checked_at=now())
+        return True
+
+    def _use_session(self, data: dict, had_session: bool):
+        accounts.save_session(self.site_id, data)
+        accounts.clear_applied(self.site, self.http)
+        accounts.apply(self.site, self.http)
+        if self.browser:
+            self.browser.close()
+            self.browser.initial_cookies = data.get("cookies") or []
+        ok = self.site.check_login()
+        if ok is False:
+            raise RuntimeError("the site still shows you as logged out")
+        who = f" as {data['user']}" if data.get("user") else ""
+        accounts.set_state(self.site_id, state="ok", message=f"Logged in{who}.", checked_at=now())
+        self.browser_error = None
+        if not had_session and self.cls.lists_adult:
+            # A first login can show books the site hides from guests (18+): read the catalog again.
+            self.gen = None
+            self.state = {k: v for k, v in self.state.items() if k == "passes"}
+            self._save_state()
 
     # ---------- steps ----------
     def _discovery_step(self, settings) -> bool:
@@ -279,11 +374,45 @@ class Manager:
         c = db.conn()
         for site_id in SITES:
             c.execute("INSERT OR IGNORE INTO sites(id, enabled, updated_at) VALUES(?, 0, ?)", (site_id, now()))
+        self._adult_rescan_once()
+        for site_id in SITES:
             # A block from last time may be over: try again on start.
             c.execute("UPDATE sites SET status='idle' WHERE id=? AND status IN ('running','blocked','error')",
                       (site_id,))
             self._start_worker(site_id)
         self._housekeeper.start()
+        threading.Thread(target=self._retag, name="retag", daemon=True).start()
+
+    def _retag(self):
+        try:
+            if library.retag_if_needed():
+                log.info("tags: every book's labels were mapped again with the new tag list")
+        except Exception as e:  # never stop the app over this
+            log.error("retag failed: %s\n%s", e, traceback.format_exc())
+
+    def _adult_rescan_once(self):
+        """Bookkeeper used to skip 18+ books by default. Once, read the catalogs that mark them again from the
+        start, so the books skipped before arrive too (sites where you chose a setting yourself are left alone)."""
+        if db.get_setting("adult_rescan_done"):
+            return
+        c = db.conn()
+        for site_id, cls in SITES.items():
+            row = c.execute("SELECT settings, state FROM sites WHERE id=?", (site_id,)).fetchone()
+            if not cls.lists_adult or not row or "include_adult" in jload(row["settings"], {}):
+                continue
+            state = jload(row["state"], {})
+            if state:
+                c.execute("UPDATE sites SET state=? WHERE id=?",
+                          (jdump({k: v for k, v in state.items() if k == "passes"}), site_id))
+        db.set_setting("adult_rescan_done", True)
+
+    def account_action(self, site_id: str, action: str):
+        w = self.workers.get(site_id)
+        if not w:
+            raise KeyError(site_id)
+        accounts.set_state(site_id, state="working", message="Waiting for the current step to finish…")
+        w.commands.put(action)
+        w.wake.set()
 
     def _start_worker(self, site_id: str):
         w = self.workers.get(site_id)

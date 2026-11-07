@@ -196,6 +196,7 @@ END;
 # Columns added after the first release: (table, column, definition). Applied on start if missing.
 MIGRATIONS = [
     ("analysis", "attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("tags", "label_uk", "TEXT"),
 ]
 
 _local = threading.local()

@@ -1,6 +1,8 @@
 """What every site connector looks like."""
+import re
 from dataclasses import dataclass, field
 from typing import Iterator
+from urllib.parse import urlparse
 
 from ..http import Http
 
@@ -52,6 +54,15 @@ class TemporaryError(Exception):
     """A hiccup worth retrying later (a timeout, a slow page...)."""
 
 
+ADULT_LABELS = re.compile(r"(?i)^(18\+|21\+|nc-17|nc-21|r-18|r18|adult|smut|hentai|смут|эротик|хентай|"
+                          r"для взрослых|откровенные сцены|порн)")
+
+
+def looks_adult(labels) -> bool:
+    """True if a site's genres / tags / age label mark the book as 18+ (or 21+)."""
+    return any(ADULT_LABELS.search((x or "").strip()) for x in labels or [])
+
+
 class Site:
     id = ""
     name = ""
@@ -61,11 +72,37 @@ class Site:
     needs_browser_for_text = False            # chapter text is only readable in a real browser
     note = ""                                 # shown on the Sites page
     native_formats: tuple[str, ...] = ()      # formats the site can give us directly (fb2, epub...)
+    lists_adult = False                       # the catalog marks 18+ books, so they used to be skipped there
+    has_text = True                           # False: catalog only (no narration check, no downloads)
+    # Browser extensions (in your own Waterfox) that can download this site's books, e.g. ExLoader.
+    extension_downloads: tuple[str, ...] = ()
+
+    # ----- accounts (see accounts.py). No login_url = no account support.
+    login_url = ""
+    login_benefit = ""                        # what logging in gives you, shown on the Sites page
+    login_autofill = True                     # Bookkeeper can fill in a saved login and password
+    login_form: dict = {}                     # optional CSS selectors: user, password, submit
+    # JavaScript that is true on a page once you're logged in.
+    logged_in_js = ("!/(log-?in|sign-?in|auth|вход)/i.test(location.pathname) && "
+                    "![...document.querySelectorAll('input[type=password]')].some(e => e.offsetParent !== null)")
+    token_js = ""                             # JavaScript returning an access token to keep (RanobeLib)
+    user_js = ""                              # JavaScript returning your user name on the site
+    session_token = None                      # set by accounts.apply()
 
     def __init__(self, http: Http, settings: dict | None = None, browser=None):
         self.http = http
         self.settings = settings or {}
         self.browser = browser
+        self.progress = None                  # optional callback(n) while a slow chapter list is being built
+
+    @classmethod
+    def cookie_domains(cls) -> tuple[str, ...]:
+        host = urlparse(cls.home).hostname or ""
+        return (host[4:] if host.startswith("www.") else host,)
+
+    # Is the saved session still logged in? True / False, or None when this site can't tell cheaply.
+    def check_login(self) -> bool | None:
+        return None
 
     # Walk the catalog. `state` is a dict you may update to resume later; yield batches of books.
     def discover(self, state: dict) -> Iterator[list[BookInfo]]:

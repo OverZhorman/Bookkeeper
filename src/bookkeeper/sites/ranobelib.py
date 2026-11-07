@@ -48,20 +48,43 @@ class RanobeLib(Site):
     home = "https://ranobelib.me"
     lang = "ru"
     min_interval = 1.0
-    note = "Reads the site's own data feed. 18+ titles may need a login and are skipped otherwise."
+    note = "Reads the site's own data feed. The site shows some 18+ titles only to logged-in readers."
+    lists_adult = True
+    # The site logs you in through a pop-up from its own login service, so Bookkeeper can't fill in a password
+    # for you: press "Log in…" and log in in the window that opens.
+    login_url = "https://ranobelib.me/ru"
+    login_benefit = "18+ titles that the site shows only to logged-in readers. In the window, press «Войти»."
+    login_autofill = False
+    _AUTH = "(() => { try { return JSON.parse(localStorage.getItem('auth') || '{}') } catch (e) { return {} } })()"
+    logged_in_js = f"!!(({_AUTH}).token || {{}}).access_token"
+    token_js = f"(({_AUTH}).token || {{}}).access_token || null"
+    user_js = f"(({_AUTH}).auth || {{}}).username || null"
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.api = self.settings.get("api") or API_HOSTS[0]
 
+    @classmethod
+    def cookie_domains(cls) -> tuple[str, ...]:
+        return ("ranobelib.me", "lib.social", "cdnlibs.org")
+
+    def check_login(self) -> bool | None:
+        if not self.session_token:
+            return False
+        p = self.http.get(self.api + "/auth/me", ok_status=(401, 403),
+                          headers={"Site-Id": SITE_ID, "Accept": "application/json",
+                                   "Authorization": f"Bearer {self.session_token}"})
+        return p.status == 200
+
     def _get(self, path: str, params=None):
         hosts = [self.api] + [h for h in API_HOSTS if h != self.api]
         last = None
+        headers = {"Site-Id": SITE_ID, "Accept": "application/json", "Referer": self.home + "/"}
+        if self.session_token:
+            headers["Authorization"] = f"Bearer {self.session_token}"
         for host in hosts:
             try:
-                data = self.http.get_json(host + path, params=params,
-                                          headers={"Site-Id": SITE_ID, "Accept": "application/json",
-                                                   "Referer": self.home + "/"})
+                data = self.http.get_json(host + path, params=params, headers=headers)
                 self.api = host
                 return data
             except Blocked as e:  # try the other address of the same data feed

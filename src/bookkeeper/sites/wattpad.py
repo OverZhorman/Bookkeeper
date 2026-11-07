@@ -23,6 +23,7 @@ class Wattpad(Site):
     min_interval = 1.5
     note = ("Too big to collect whole: Bookkeeper collects the results of your search terms (Settings). "
             "Many Wattpad authors tag their point of view (firstperson, 1stperson), which helps a lot.")
+    lists_adult = True
     extra_settings = {
         "queries": {"label": "Search terms, comma-separated", "default": DEFAULT_QUERIES},
         "languages": {"label": "Languages to keep (en, ru, uk)", "default": "en, ru, uk"},
