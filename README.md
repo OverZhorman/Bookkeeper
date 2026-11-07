@@ -107,7 +107,7 @@ Download the new ZIP and unpack it over the old folder. Your `data` folder is ke
 
 ## Fair use
 
-Bookkeeper is for your personal reading. It only reads what the sites already show you: free chapters, plus ones you bought if you are logged in. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
+Bookkeeper is for your personal reading. It only reads what the sites show to any visitor: free chapters. Logging in to download chapters you bought isn't supported yet. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
 
 ## Troubleshooting
 

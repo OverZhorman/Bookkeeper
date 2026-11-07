@@ -496,7 +496,7 @@ function renderBook(d) {
     h("div", { class: "section" }, h("h3", {}, "Narration"), narrationBox(d)),
     h("div", { class: "section" }, h("h3", {}, "My shelves"), shelfBtns),
     h("div", { class: "section" }, h("h3", {}, "Download for your e-reader"), downloads,
-      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, "Downloads include the chapters the site lets you read: free ones, and bought ones if you're logged in.")),
+      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, "Downloads include the free chapters. Paid chapters are skipped (logging in isn't supported yet).")),
     d.description ? h("div", { class: "section" }, h("h3", {}, "Description"), h("div", { class: "desc" }, d.description)) : null,
     h("div", { class: "section" }, h("h3", {}, "Tags"), tagSections.length ? tagSections : h("p", { class: "muted" }, "No tags yet."),
       h("div", { class: "legend" }, h("span", {}, "solid: written on the site"), h("span", {}, "dashed: added by Bookkeeper (rules, text, other copies)"))),
@@ -652,7 +652,7 @@ function renderHelp() {
       h("div", { class: "help-card" }, h("h2", {}, "Being polite to the sites"),
         h("p", {}, "Each site gets its own slow, steady pace. If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and tells you on the Sites page instead of retrying over and over.")),
       h("div", { class: "help-card" }, h("h2", {}, "Paid chapters"),
-        h("p", {}, "Bookkeeper only reads what the site lets you read: free chapters, plus bought ones if you are logged in. The narration check only needs the first few chapters, which are almost always free.")))));
+        h("p", {}, "Bookkeeper only reads what the site shows to any visitor: free chapters. Logging in to download bought chapters isn't supported yet. The narration check only needs the first few chapters, which are almost always free.")))));
 }
 
 // ---------- start ----------

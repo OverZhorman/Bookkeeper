@@ -1,7 +1,7 @@
 """Building TXT, FB2 and EPUB files for your e-reader.
 
-A download fetches every chapter the site lets you read (free ones, or bought ones if you are logged in through
-Bookkeeper's browser), at the site's normal polite pace, then writes the file into data/downloads."""
+A download fetches every free chapter of a book at the site's normal polite pace (it stops at the first paid
+chapter), then writes the file into data/downloads."""
 import base64
 import html
 import re
