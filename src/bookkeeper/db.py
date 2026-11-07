@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS match_keys(       -- normalized title(+author) keys f
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS match_keys_book ON match_keys(book_id);
 
+CREATE TABLE IF NOT EXISTS mentions(          -- books mentioned in forum posts, matched to the library over time
+    id       INTEGER PRIMARY KEY,
+    source   TEXT NOT NULL,
+    post_url TEXT NOT NULL,
+    at       TEXT,
+    site     TEXT,                            -- for links to a known site: which site and which book there
+    sid      TEXT,
+    url      TEXT,
+    title    TEXT,                            -- for "Author «Title»" in the text
+    author   TEXT,
+    matched  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, post_url, site, sid, url, title, author)
+);
+CREATE INDEX IF NOT EXISTS mentions_open ON mentions(matched);
+
 CREATE TABLE IF NOT EXISTS recommendations(  -- books recommended on forums (Kubikus)
     book_id  INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     source   TEXT NOT NULL,

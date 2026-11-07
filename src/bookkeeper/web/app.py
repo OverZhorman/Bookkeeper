@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, config, db, export, library, search
+from .. import __version__, config, db, diagnostics, export, library, search
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -122,6 +122,25 @@ def create_app(manager: Manager) -> FastAPI:
     def site_retry(site_id: str):
         manager.retry(site_id)
         return {"ok": True}
+
+    # ---------- tests for sites without a connector yet ----------
+    @app.post("/api/diagnose/{site_id}")
+    def diagnose_start(site_id: str, body: dict = Body(default={})):
+        try:
+            return diagnostics.start(site_id, allow_browser=bool(body.get("browser", True)))
+        except KeyError:
+            raise HTTPException(404)
+
+    @app.get("/api/diagnose/{site_id}")
+    def diagnose_status(site_id: str):
+        return diagnostics.status(site_id) or {"state": "none"}
+
+    @app.get("/api/diagnose/{site_id}/zip")
+    def diagnose_zip(site_id: str):
+        p = diagnostics.zip_file(site_id)
+        if not p:
+            raise HTTPException(404)
+        return FileResponse(p, filename=f"bookkeeper-test-{site_id}.zip")
 
     # ---------- downloads ----------
     @app.post("/api/downloads")

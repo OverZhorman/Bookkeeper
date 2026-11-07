@@ -58,12 +58,27 @@ You can filter by each of these sources.
 | RanobeLIB | ✅ Working |
 | Author.Today | ✅ Working. Chapter text is read through Microsoft Edge on your computer, because the site scrambles it for anything that isn't a browser |
 | Flibusta | ✅ Working. Downloads use Flibusta's own FB2/EPUB files |
-| Litnet, Kubikus (+ forum recommendations), RanobeHub, Ranobes, Wuxia.click, Wattpad, RuLit, LitMir, Litvek | Coming next |
+| Litnet | ✅ Working (Russian and Ukrainian books) |
+| Wuxia.click | ✅ Working (English translations, with NovelUpdates-style tags) |
+| Wattpad | ✅ Working. Wattpad is too big to collect whole, so Bookkeeper collects the results of your search terms (Sites → Wattpad → Settings) |
+| Kubikus forum | ✅ Working. It adds no books of its own: it reads the recommendation sections and marks the books people recommend, including books that arrive in your library later. Filter with "Only books recommended on forums" |
+| RanobeHub, Ranobes, RuLit, LitMir, Litvek | Coming next |
 | Ficbook, Scribble Hub, WebNovel, FanFiction.net, NovelUpdates, Royal Road | Planned. These sites show a bot check to the test server, so they need a test run from a home computer first |
 | Rulate, RoyalLib, Samlib | Planned. These block or don't answer the test server |
 | Archive of Our Own | Planned, once its maintenance is over |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
+
+### Testing the sites that don't have a connector yet
+
+Some sites block the server Bookkeeper was built on, so their connectors need pages seen from your computer:
+
+1. On the **Sites** page, in **Coming next**, press **Test from this computer** next to a site.
+2. Bookkeeper slowly opens a few of that site's pages: home, catalog, one book, one chapter.
+3. If a page shows an "are you human?" check, a normal Microsoft Edge window opens. Complete the check yourself, and the test continues.
+4. Press **Download the test ZIP** and send the file to whoever is writing the connector.
+
+The ZIP contains only those pages as the site showed them, plus a short report.
 
 ## Your own tags and rules
 

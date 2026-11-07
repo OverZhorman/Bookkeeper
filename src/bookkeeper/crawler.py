@@ -351,6 +351,8 @@ class Manager:
                     last_counts = time.time()
                 if time.time() - self.last_match > 1800:
                     self.run_matching()
+                    from .sites.kubikus import match_open_mentions
+                    match_open_mentions()
             except Exception as e:  # never let housekeeping die
                 log.error("housekeeping: %s\n%s", e, traceback.format_exc())
 

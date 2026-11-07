@@ -535,14 +535,44 @@ async function drawSites(first) {
   if (first) {
     $("#planned").replaceChildren(
       h("h2", { style: { fontSize: "17px", margin: "0 0 4px" } }, "Coming next"),
-      h("p", { class: "muted", style: { margin: "0 0 10px" } }, "These sites from your list don't have a connector yet."),
-      h("table", {}, h("tr", {}, h("th", {}, "Site"), h("th", {}, "Status")),
-        data.planned.map((p) => h("tr", {}, h("td", {}, h("a", { href: p.home, target: "_blank" }, p.name)), h("td", { class: "muted" }, p.reason)))),
+      h("p", { class: "muted", style: { margin: "0 0 10px", maxWidth: "820px" } },
+        "These sites from your list don't have a connector yet. Several of them block the server Bookkeeper was built on, but they probably work from your computer. ",
+        h("b", {}, "Test from this computer"), " visits a few pages of the site slowly (home, catalog, one book, one chapter) and saves what it sees into a ZIP file. Send that ZIP to finish the site's connector. If a page shows an “are you human?” check, a normal Edge window opens so you can complete it yourself."),
+      h("table", {}, h("tr", {}, h("th", {}, "Site"), h("th", {}, "Status"), h("th", {}, "Test")),
+        data.planned.map((p) => h("tr", {}, h("td", {}, h("a", { href: p.home, target: "_blank" }, p.name)), h("td", { class: "muted" }, p.reason),
+          h("td", { id: `test-${p.id}`, style: { minWidth: "260px" } }, testCell(p.id))))),
       h("div", { style: { marginTop: "18px", display: "flex", gap: "8px", flexWrap: "wrap" } },
         h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/match"); toast("Looking for the same books on different sites…"); } }, "Find the same books across sites now"),
         h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/retag"); toast("Re-applying tag rules in the background…"); } }, "Re-apply my tag rules")));
   }
 }
+function testCell(siteId) {
+  const cell = h("div", {}, h("button", { class: "btn small", onclick: () => runTest(siteId) }, "Test from this computer"));
+  refreshTest(siteId, cell);
+  return cell;
+}
+async function runTest(siteId) {
+  await api.post(`/api/diagnose/${siteId}`, { browser: true });
+  toast("Test started — it takes a minute or two");
+  const cell = $(`#test-${siteId}`);
+  const poll = async () => { const st = await refreshTest(siteId, cell && cell.firstChild); if (st === "running") setTimeout(poll, 2500); };
+  poll();
+}
+async function refreshTest(siteId, cell) {
+  let st;
+  try { st = await api.get(`/api/diagnose/${siteId}`); } catch { return; }
+  if (!cell || !st || st.state === "none") return st && st.state;
+  const parts = [];
+  if (st.state === "running") parts.push(h("div", { class: "activity" }, h("span", { class: "dot on" }), st.summary));
+  else {
+    parts.push(h("button", { class: "btn small", onclick: () => runTest(siteId) }, "Test again"));
+    if (st.zip) parts.push(" ", h("a", { class: "btn small primary", href: `/api/diagnose/${siteId}/zip` }, "Download the test ZIP"));
+    parts.push(h("div", { class: "faint", style: { fontSize: "12px", marginTop: "4px" } }, st.summary));
+  }
+  cell.replaceChildren(...parts);
+  return st.state;
+}
+
 function siteCard(s) {
   const c = s.counts || {};
   const status = !s.enabled ? "paused" : s.status;

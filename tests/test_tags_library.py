@@ -60,3 +60,23 @@ def test_cross_site_matching_shares_tags(lib):
     assert tuple(row) == ("first", "other-site")
     tags_a = {r[0] for r in c.execute("SELECT tag FROM book_tags WHERE book_id=?", (a,))}
     assert {"system", "rpg-elements", "apocalypse"} <= tags_a
+
+
+def test_forum_mentions_are_extracted_and_matched(lib):
+    db, T, library, matching = lib
+    from bookkeeper.sites.base import BookInfo
+    from bookkeeper.sites import kubikus
+    body = ('<hr noshade size="1"> Почитайте Метельский «Унесенный ветром», а ещё '
+            '<a href="https://author.today/work/354468">вот это</a> и <a href="http://samlib.ru/n/nik/">самлиб</a>.')
+    found = kubikus.extract_mentions(body)
+    assert {"site": "authortoday", "sid": "354468", "url": "https://author.today/work/354468"} in found
+    assert any(m.get("title") == "Унесенный ветром" and "Метельский" in m.get("author", "") for m in found)
+    assert {"url": "http://samlib.ru/n/nik/"} in found
+    a = library.upsert_book("authortoday", BookInfo(sid="354468", url="u", title="Третий Генерал", authors=["Бакалавр Зот"]))
+    b = library.upsert_book("flibusta", BookInfo(sid="1", url="u", title="Унесенный ветром", authors=["Николай Метельский"]))
+    c = db.conn()
+    for m in found:
+        c.execute("INSERT INTO mentions(source, post_url, at, site, sid, url, title, author) VALUES(?,?,?,?,?,?,?,?)",
+                  ("Kubikus", "http://post", "2026-01-01", m.get("site"), m.get("sid"), m.get("url"), m.get("title"), m.get("author")))
+    assert kubikus.match_open_mentions() == 2
+    assert {r[0] for r in c.execute("SELECT book_id FROM recommendations")} == {a, b}
