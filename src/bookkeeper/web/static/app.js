@@ -555,7 +555,10 @@ function siteCard(s) {
         h("input", { class: "input", type: "number", min: 0.5, max: 30, step: 0.5, value: settings.min_interval || s.default_interval,
           onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { min_interval: +e.target.value }); toast("Saved"); } })),
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: settings.analyze !== false, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { analyze: e.target.checked }); toast("Saved"); } }), "Check narration of each book (reads its opening chapters)"),
-      h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!settings.include_adult, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { include_adult: e.target.checked }); toast("Saved"); } }), "Include 18+ books")));
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!settings.include_adult, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { include_adult: e.target.checked }); toast("Saved"); } }), "Include 18+ books"),
+      Object.entries(s.extra_settings || {}).map(([key, def]) => h("div", { class: "field" }, h("label", {}, def.label),
+        h("textarea", { class: "note", style: { minHeight: "54px" }, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { [key]: e.target.value }); toast("Saved — collecting with the new settings"); } },
+          settings[key] ?? def.default)))));
   const live = s.live || {};
   const busy = s.enabled && live.activity && !["idle", "starting"].includes(live.activity);
   return h("div", { class: "sitecard" },

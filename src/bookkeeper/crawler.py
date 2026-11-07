@@ -33,7 +33,8 @@ DEFAULTS = {"min_interval": None, "analyze": True, "include_adult": False, "deta
 
 def site_settings(site_id: str) -> dict:
     row = db.conn().execute("SELECT settings FROM sites WHERE id=?", (site_id,)).fetchone()
-    return {**DEFAULTS, **(jload(row["settings"], {}) if row else {})}
+    extra = {k: v["default"] for k, v in getattr(SITES.get(site_id), "extra_settings", {}).items()}
+    return {**DEFAULTS, **extra, **(jload(row["settings"], {}) if row else {})}
 
 
 class SiteWorker(threading.Thread):
@@ -310,14 +311,22 @@ class Manager:
         self.poke(site_id)
 
     def update_settings(self, site_id: str, values: dict):
+        extra_keys = set(getattr(SITES[site_id], "extra_settings", {}))
         current = jload(db.conn().execute("SELECT settings FROM sites WHERE id=?", (site_id,)).fetchone()["settings"], {})
-        current.update({k: v for k, v in values.items() if k in DEFAULTS})
+        changed_scope = any(k in extra_keys and current.get(k) != v for k, v in values.items())
+        current.update({k: v for k, v in values.items() if k in DEFAULTS or k in extra_keys})
         db.conn().execute("UPDATE sites SET settings=? WHERE id=?", (jdump(current), site_id))
         w = self.workers.get(site_id)
         if w and w.http and values.get("min_interval"):
             w.http.min_interval = float(values["min_interval"])
         if w and w.site:
             w.site.settings.update(current)
+        if changed_scope:  # e.g. new Wattpad search terms: start a fresh catalog pass with them
+            if w:
+                w.gen = None
+                w.state = {k: v for k, v in w.state.items() if k in ("passes",)}
+                w._save_state()
+            self.poke(site_id)
 
     def run_matching(self):
         if self.matching_now:

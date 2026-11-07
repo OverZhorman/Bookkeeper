@@ -37,11 +37,15 @@ CYR = re.compile(r"[А-Яа-яЁёІіЇїЄєҐґ]")
 LAT = re.compile(r"[A-Za-z]")
 
 
+EN_WORDS = re.compile(r"\b(the|and|of|to|was|that|with|for|you|his|her|it|in|is)\b", re.I)
+
+
 def detect_lang(text: str) -> str:
     sample = text[:30000]
     cyr, lat = len(CYR.findall(sample)), len(LAT.findall(sample))
     if lat > cyr:
-        return "en"
+        words = max(1, len(re.findall(r"[A-Za-z]+", sample)))
+        return "en" if len(EN_WORDS.findall(sample)) / words > 0.08 or words < 12 else "other"
     if not cyr:
         return "unknown"
     uk, ru = len(UK_ONLY.findall(sample)), len(RU_ONLY.findall(sample))

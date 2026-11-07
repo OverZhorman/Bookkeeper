@@ -95,6 +95,7 @@ def create_app(manager: Manager) -> FastAPI:
             out.append({
                 "id": sid, "name": cls.name, "home": cls.home, "note": cls.note, "implemented": True,
                 "needs_browser": cls.needs_browser_for_text,
+                "extra_settings": getattr(cls, "extra_settings", {}),
                 "enabled": bool(row and row["enabled"]), "status": row["status"] if row else "idle",
                 "status_msg": row["status_msg"] if row else None,
                 "settings": site_settings(sid), "default_interval": cls.min_interval,
@@ -111,7 +112,8 @@ def create_app(manager: Manager) -> FastAPI:
             raise HTTPException(404)
         if "enabled" in body:
             manager.set_enabled(site_id, bool(body["enabled"]))
-        settings = {k: v for k, v in body.items() if k in DEFAULTS}
+        allowed = set(DEFAULTS) | set(getattr(SITES[site_id], "extra_settings", {}))
+        settings = {k: v for k, v in body.items() if k in allowed}
         if settings:
             manager.update_settings(site_id, settings)
         return {"ok": True}
