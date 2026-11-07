@@ -1,0 +1,11 @@
+# Your library lives here (database, downloads, browser profile, logs)
+/data/
+# Python / tooling
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+/.tools/
+*.egg-info/
+dist/
+build/

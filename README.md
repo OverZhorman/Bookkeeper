@@ -1,1 +1,121 @@
 # Bookkeeper
+
+Your own catalog of books and web novels from the sites you read. It merges every site's tags into one list, adds the tags authors forgot, and works out from the text whether a book is told in the **first person**.
+
+- **Collects books** from your sites slowly in the background: title, author, description, genres, tags, length, status, likes and rating.
+- **One shared tag list.** «ЛитРПГ», «LitRPG», «LITRPG» and «Lit-RPG» are one tag. Rules add the obvious ones: a LitRPG book also gets "RPG / game elements".
+- **Detects narration** (first, second or third person, or mixed) from each book's opening chapters. For Russian and Ukrainian first-person books it also tells a male narrator from a female one («я пошёл» / «я пошла»).
+- **Finds the same book on different sites** and shares tags between the copies.
+- **Filter and sort by anything**, keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
+- **Downloads** books as **EPUB, FB2 or TXT** for your e-reader.
+
+Everything runs on your own computer. Nothing is uploaded anywhere.
+
+## Install on Windows
+
+1. On this GitHub page press the green **Code** button, then **Download ZIP**.
+2. Unpack the ZIP into a folder of your choice, for example `Documents\Bookkeeper`.
+3. Double-click **`Bookkeeper.bat`**.
+
+The first start takes a few minutes. It downloads a small tool called [uv](https://docs.astral.sh/uv/), which installs Python and the libraries Bookkeeper needs (about 150 MB). Later starts take a few seconds. Bookkeeper then opens in your browser at <http://127.0.0.1:8765/>.
+
+Keep the black window open while you use Bookkeeper. Closing it stops Bookkeeper.
+
+If Windows says "Windows protected your PC", press **More info**, then **Run anyway**. It says this about any downloaded `.bat` file.
+
+## First steps
+
+1. Open **Sites** and switch on the sites you want. Collecting starts right away.
+2. Open **Library**. Books appear as they are collected. In the filters, pick **Narration → 1st person**.
+3. Click a book to see its details. From there you can correct its narration, put it on a shelf or download it.
+
+Collecting runs at a slow, steady pace, about one page every 1–2 seconds per site, so the sites don't ban you. For each book that's about 2–4 pages: the catalog, the book's page, and the opening chapters. Big sites take days to collect fully. Popular books come first, so the library is useful within the first hour. You can close Bookkeeper at any time; it continues where it stopped.
+
+## How narration is detected
+
+Characters say "I" all the time, even in third-person books, so pronouns can't simply be counted. For each book, Bookkeeper:
+
+1. reads the opening chapters (usually 3, which are almost always free);
+2. removes dialogue (`— Реплика, — сказал он.`, «…», "…"), quoted thoughts, game messages in `[brackets]` and author or translator notes;
+3. counts "I / я" against "he / she / он / она" in the narration that's left, chunk by chunk;
+4. calls the book **first**, **third** or **second person**, **mixed** when the chunks disagree, or **unsure**.
+
+**Accuracy.** I tested it on 41 books whose narration I knew: 21 Russian web novels from Ranobelib and 20 English classics. The settings were fixed before the test. Result: **40 right, 1 "unsure", 0 wrong**, and narrator gender right for all 11 Russian first-person books. To run the test again yourself: `uv run python tools/validate_pov.py`.
+
+**Priority.** When there are several sources of information, this order wins:
+
+1. your own correction;
+2. the site's own tag (for example «от первого лица»);
+3. the text check;
+4. a copy of the same book on another site.
+
+You can filter by each of these sources.
+
+## Sites
+
+| Site | Status |
+|---|---|
+| RanobeLIB | ✅ Working |
+| Author.Today | ✅ Working. Chapter text is read through Microsoft Edge on your computer, because the site scrambles it for anything that isn't a browser |
+| Flibusta | ✅ Working. Downloads use Flibusta's own FB2/EPUB files |
+| Litnet, Kubikus (+ forum recommendations), RanobeHub, Ranobes, Wuxia.click, Wattpad, RuLit, LitMir, Litvek | Coming next |
+| Ficbook, Scribble Hub, WebNovel, FanFiction.net, NovelUpdates, Royal Road | Planned. These sites show a bot check to the test server, so they need a test run from a home computer first |
+| Rulate, RoyalLib, Samlib | Planned. These block or don't answer the test server |
+| Archive of Our Own | Planned, once its maintenance is over |
+
+If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
+
+## Your own tags and rules
+
+Open `data\my_tags.toml` in Notepad. It is created on the first start and explains itself. You can:
+
+- map site labels to tags (`"попаданец в зомби-апокалипсис" = ["isekai", "undead", "apocalypse"]`);
+- add rules (`"harem" = ["romance"]`);
+- add or rename tags.
+
+Then press **Re-apply my tag rules** on the Sites page.
+
+## Your data
+
+Everything personal lives in the `data` folder next to `Bookkeeper.bat`:
+
+- `library.db`: your library, shelves and notes;
+- `downloads\`: books you downloaded;
+- `logs\`: what Bookkeeper did, useful if something goes wrong;
+- `browser-profile\`: the browser profile Bookkeeper uses for Author.Today.
+
+To back up, copy the `data` folder.
+
+## Updating
+
+Download the new ZIP and unpack it over the old folder. Your `data` folder is kept. If you cloned the repository with Git, run `Update.bat` instead.
+
+## Fair use
+
+Bookkeeper is for your personal reading. It only reads what the sites already show you: free chapters, plus ones you bought if you are logged in. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
+
+## Troubleshooting
+
+- **"No usable browser found"** on the Author.Today card: Bookkeeper needs Microsoft Edge (built into Windows) or Google Chrome.
+- **A site shows "Blocked"**: check that the site opens in your normal browser, then press **Try again** on its card. If it's blocked all the time, raise the pause between requests in that site's settings.
+- **Nothing happens when I start it a second time**: Bookkeeper is already running, and the second start just opens the page again.
+- Anything else: look in `data\logs\bookkeeper.log`.
+
+## For developers
+
+```
+uv sync
+uv run --group dev pytest          # unit tests
+uv run bookkeeper --no-browser     # start without opening a browser
+uv run python tools/validate_pov.py
+```
+
+Code layout (`src/bookkeeper/`):
+
+- `sites/`: one connector per site. Each one implements `discover`, `details`, `chapters` and `chapter_text`.
+- `analysis/pov.py`: the narration detector.
+- `tags.py`: the shared tag list, synonyms and rules.
+- `matching.py`: matching the same book across sites.
+- `crawler.py`: the background workers.
+- `export.py`: TXT, FB2 and EPUB files.
+- `web/`: the local server and the interface (plain JavaScript, no build step).
