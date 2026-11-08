@@ -197,6 +197,9 @@ END;
 MIGRATIONS = [
     ("analysis", "attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("tags", "label_uk", "TEXT"),
+    ("books", "age_rating", "TEXT"),        # G / PG-13 / R / NC-17 / NC-21, when the site says
+    ("book_tags", "score", "REAL"),         # how likely a possible tag (source 'maybe') is, 0..1
+    ("books", "labels", "TEXT"),            # the site's labels exactly as written (JSON list); tags come from them
 ]
 
 _local = threading.local()
@@ -248,6 +251,11 @@ def init(path: Path | None = None) -> None:
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in have:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        # Books saved before 0.4.1 get their site labels back from their tags, once.
+        if conn.execute("SELECT 1 FROM books WHERE labels IS NULL LIMIT 1").fetchone():
+            conn.execute("UPDATE books SET labels = (SELECT json_group_array(raw) FROM (SELECT DISTINCT raw FROM "
+                         "book_tags WHERE book_id = books.id AND source = 'site' AND raw IS NOT NULL)) "
+                         "WHERE labels IS NULL")
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

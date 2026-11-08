@@ -107,6 +107,8 @@ def test_login_copied_from_waterfox_profile(env, monkeypatch):
     future, past = int(time.time()) + 86400, int(time.time()) - 86400
     con.executemany("INSERT INTO moz_cookies VALUES(?,?,?,?,?,?,?)", [
         ("LoginCookie", "abc", ".author.today", "/", 1, 1, future),
+        ("cf_clearance", "passed-by-your-browser", ".author.today", "/", 1, 1, future),  # never copied
+        ("__cf_bm", "z", ".author.today", "/", 1, 1, future),
         ("old", "x", "author.today", "/", 1, 0, past),
         ("other", "y", ".example.com", "/", 0, 0, future)])
     con.commit()

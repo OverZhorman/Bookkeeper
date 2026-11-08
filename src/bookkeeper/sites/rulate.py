@@ -154,7 +154,7 @@ class Rulate(Site):
             return [_text(x) for x in re.findall(r'class="badge">(.*?)</a>', field(name), re.S)]
 
         genres, tags, fandoms = badges("Жанры"), badges("Тэги"), badges("Фэндом")
-        labels = list(dict.fromkeys(x for x in genres + tags + fandoms if x))
+        labels = list(dict.fromkeys(x for x in genres + tags + [f"fandom:{f}" for f in fandoms] if x))
         authors = [_text(a) for a in re.findall(r"<a[^>]*>(.*?)</a>", field("Автор"), re.S)] or \
             ([_text(field("Автор"))] if _text(field("Автор")) else [])
         year = re.search(r"\d{4}", _text(field("Год выпуска")))

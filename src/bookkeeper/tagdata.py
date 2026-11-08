@@ -149,7 +149,7 @@ MORE_TAGS: dict[str, tuple[str, str, str, list[str]]] = {
         "педагогика, воспитание детей, литература для родителей", "учебники и пособия", "справочники",
         "образовательная, прикладная, научно-популярная литература", "научно-популярная литература",
         "биографии и мемуары: исторические персоны", "военная история", "культурология", "литературоведение",
-        "документальне"]),
+        "документальне", "статья", "статті"]),
     "novel": ("Novel (full-length)", "Роман", "format", ["роман", "novel", "full-length novel", "роман, повесть"]),
     "novella": ("Novella", "Повесть", "format", ["повесть", "novella", "повість"]),
     "collection": ("Collection / anthology", "Сборник", "format", [
@@ -338,6 +338,10 @@ MORE_TAGS: dict[str, tuple[str, str, str, list[str]]] = {
                                                          "вагітність"]),
 
     # --- romance & relationships ---
+    "mixed-orientation": ("Mixed (several kinds of relationships)", "Смешанная направленность", "orientation", [
+        "смешанная", "смешанная направленность", "mixed", "multi", "mixed relationships", "змішана"]),
+    "other-orientation": ("Other kinds of relationships", "Другие виды отношений", "orientation", [
+        "другие виды отношений", "other relationships", "other", "інші види стосунків"]),
     "slow-burn": ("Slow-burn romance", "Медленная романтика", "relationship", [
         "slow romance", "slow burn", "slowburn", "слоуберн", "слоу берн", "медленный роман", "медленная романтика",
         "late romance", "поздняя романтика", "неспешное развитие отношений"]),
@@ -439,61 +443,61 @@ MORE_TAGS: dict[str, tuple[str, str, str, list[str]]] = {
     "loli": ("Loli characters", "Лоли", "content", ["лоли", "loli", "лоликон", "lolicon"]),
 
     # --- fandoms (fanfiction) ---
-    "fandom-naruto": ("Naruto", "Наруто", "fanfic", [
+    "fandom-naruto": ("Naruto", "Наруто", "fandom", [
         "наруто", "naruto", "мир наруто", "мирнаруто", "аниме наруто", "анименаруто", "наруто шиппуден", "боруто",
         "boruto", "акацуки", "коноха", "команда 7", "команда7"]),
-    "fandom-harry-potter": ("Harry Potter", "Гарри Поттер", "fanfic", [
+    "fandom-harry-potter": ("Harry Potter", "Гарри Поттер", "fandom", [
         "гарри поттер", "harry potter", "harrypotter", "гп", "поттер", "хогвартс", "hogwarts", "слизерин",
         "гриффиндор", "драмиона", "дамбигад", "гаррі поттер"]),
-    "fandom-marvel": ("Marvel", "Марвел", "fanfic", ["марвел", "marvel", "мстители", "avengers", "человек-паук",
+    "fandom-marvel": ("Marvel", "Марвел", "fandom", ["марвел", "marvel", "мстители", "avengers", "человек-паук",
                                                      "spider-man", "мцу", "mcu"]),
-    "fandom-bts": ("BTS (k-pop)", "BTS (k-pop)", "fanfic", ["bts", "бтс", "bangtan", "вигуки", "vkook", "юнмины",
+    "fandom-bts": ("BTS (k-pop)", "BTS (k-pop)", "fandom", ["bts", "бтс", "bangtan", "вигуки", "vkook", "юнмины",
                                                             "намджины"]),
-    "fandom-stray-kids": ("Stray Kids (k-pop)", "Stray Kids (k-pop)", "fanfic", [
+    "fandom-stray-kids": ("Stray Kids (k-pop)", "Stray Kids (k-pop)", "fandom", [
         "straykids", "stray kids", "стрейкидс", "стрей кидс", "skz", "хенликсы", "минсоны"]),
-    "fandom-kpop": ("K-pop", "K-pop", "fanfic", ["k-pop", "kpop", "кпоп", "к-поп", "blackpink", "exo", "twice",
+    "fandom-kpop": ("K-pop", "K-pop", "fandom", ["k-pop", "kpop", "кпоп", "к-поп", "blackpink", "exo", "twice",
                                                  "ateez", "enhypen", "txt"]),
-    "fandom-mha": ("My Hero Academia", "Моя геройская академия", "fanfic", [
+    "fandom-mha": ("My Hero Academia", "Моя геройская академия", "fandom", [
         "моя геройская академия", "my hero academia", "boku no hero academia", "bnha", "mha", "мга"]),
-    "fandom-bsd": ("Bungou Stray Dogs", "Великий из бродячих псов", "fanfic", [
+    "fandom-bsd": ("Bungou Stray Dogs", "Великий из бродячих псов", "fandom", [
         "великий из бродячих псов", "бродячие псы", "bungou stray dogs", "bsd", "бсд"]),
-    "fandom-aot": ("Attack on Titan", "Атака титанов", "fanfic", ["атака титанов", "attack on titan", "aot",
+    "fandom-aot": ("Attack on Titan", "Атака титанов", "fandom", ["атака титанов", "attack on titan", "aot",
                                                                   "shingeki no kyojin"]),
-    "fandom-tokyo-revengers": ("Tokyo Revengers", "Токийские мстители", "fanfic", [
+    "fandom-tokyo-revengers": ("Tokyo Revengers", "Токийские мстители", "fandom", [
         "токийские мстители", "tokyo revengers"]),
-    "fandom-genshin": ("Genshin Impact", "Геншин", "fanfic", ["геншин", "геншин импакт", "genshin", "genshin impact"]),
-    "fandom-undertale": ("Undertale", "Андертейл", "fanfic", ["андертейл", "undertale", "андертейл ау"]),
-    "fandom-transformers": ("Transformers", "Трансформеры", "fanfic", [
+    "fandom-genshin": ("Genshin Impact", "Геншин", "fandom", ["геншин", "геншин импакт", "genshin", "genshin impact"]),
+    "fandom-undertale": ("Undertale", "Андертейл", "fandom", ["андертейл", "undertale", "андертейл ау"]),
+    "fandom-transformers": ("Transformers", "Трансформеры", "fandom", [
         "трансформеры", "transformers", "автоботы", "десептиконы", "трансформеры прайм", "transformers prime"]),
-    "fandom-hxh": ("Hunter x Hunter", "Хантер х Хантер", "fanfic", ["хантер х хантер", "хантерххантер",
+    "fandom-hxh": ("Hunter x Hunter", "Хантер х Хантер", "fandom", ["хантер х хантер", "хантерххантер",
                                                                      "hunter x hunter"]),
-    "fandom-one-piece": ("One Piece", "Ван Пис", "fanfic", ["ванпис", "ван пис", "one piece", "onepiece"]),
-    "fandom-fairy-tail": ("Fairy Tail", "Хвост феи", "fanfic", ["хвост феи", "fairy tail"]),
-    "fandom-demon-slayer": ("Demon Slayer", "Клинок, рассекающий демонов", "fanfic", [
+    "fandom-one-piece": ("One Piece", "Ван Пис", "fandom", ["ванпис", "ван пис", "one piece", "onepiece"]),
+    "fandom-fairy-tail": ("Fairy Tail", "Хвост феи", "fandom", ["хвост феи", "fairy tail"]),
+    "fandom-demon-slayer": ("Demon Slayer", "Клинок, рассекающий демонов", "fandom", [
         "клинок рассекающий демонов", "клинок, рассекающий демонов", "demon slayer", "kimetsu no yaiba"]),
-    "fandom-lotr": ("Tolkien / Lord of the Rings", "Властелин колец / Толкин", "fanfic", [
+    "fandom-lotr": ("Tolkien / Lord of the Rings", "Властелин колец / Толкин", "fandom", [
         "властелин колец", "lord of the rings", "хоббит", "hobbit", "толкин", "tolkien"]),
-    "fandom-maze-runner": ("The Maze Runner", "Бегущий в лабиринте", "fanfic", ["бегущий в лабиринте",
+    "fandom-maze-runner": ("The Maze Runner", "Бегущий в лабиринте", "fandom", ["бегущий в лабиринте",
                                                                                  "maze runner", "the maze runner"]),
-    "fandom-twilight": ("Twilight", "Сумерки", "fanfic", ["сумерки", "twilight"]),
-    "fandom-star-wars": ("Star Wars", "Звёздные войны", "fanfic", ["звездные войны", "star wars"]),
-    "fandom-warhammer": ("Warhammer", "Warhammer", "fanfic", ["warhammer", "warhammer 40000", "warhammer 40k",
+    "fandom-twilight": ("Twilight", "Сумерки", "fandom", ["сумерки", "twilight"]),
+    "fandom-star-wars": ("Star Wars", "Звёздные войны", "fandom", ["звездные войны", "star wars"]),
+    "fandom-warhammer": ("Warhammer", "Warhammer", "fandom", ["warhammer", "warhammer 40000", "warhammer 40k",
                                                               "вархаммер"]),
-    "fandom-minecraft": ("Minecraft", "Майнкрафт", "fanfic", ["майнкрафт", "minecraft"]),
-    "fandom-winx": ("Winx", "Винкс", "fanfic", ["винкс", "winx"]),
-    "fandom-ninjago": ("Ninjago", "Ниндзяго", "fanfic", ["ниндзяго", "ninjago"]),
-    "fandom-fnaf": ("Five Nights at Freddy's", "ФНАФ", "fanfic", ["фнаф", "fnaf", "five nights at freddy's"]),
-    "fandom-hazbin": ("Hazbin Hotel", "Отель Хазбин", "fanfic", ["отель хазбин", "hazbin hotel"]),
-    "fandom-countryhumans": ("Countryhumans", "Countryhumans", "fanfic", ["countryhumans"]),
-    "fandom-elder-scrolls": ("The Elder Scrolls", "The Elder Scrolls", "fanfic", ["the elder scrolls", "elder scrolls",
+    "fandom-minecraft": ("Minecraft", "Майнкрафт", "fandom", ["майнкрафт", "minecraft"]),
+    "fandom-winx": ("Winx", "Винкс", "fandom", ["винкс", "winx"]),
+    "fandom-ninjago": ("Ninjago", "Ниндзяго", "fandom", ["ниндзяго", "ninjago"]),
+    "fandom-fnaf": ("Five Nights at Freddy's", "ФНАФ", "fandom", ["фнаф", "fnaf", "five nights at freddy's"]),
+    "fandom-hazbin": ("Hazbin Hotel", "Отель Хазбин", "fandom", ["отель хазбин", "hazbin hotel"]),
+    "fandom-countryhumans": ("Countryhumans", "Countryhumans", "fandom", ["countryhumans"]),
+    "fandom-elder-scrolls": ("The Elder Scrolls", "The Elder Scrolls", "fandom", ["the elder scrolls", "elder scrolls",
                                                                                   "скайрим", "skyrim"]),
-    "fandom-mdzs": ("Grandmaster of Demonic Cultivation (MDZS)", "Магистр дьявольского культа", "fanfic", [
+    "fandom-mdzs": ("Grandmaster of Demonic Cultivation (MDZS)", "Магистр дьявольского культа", "fandom", [
         "магистр дьявольского культа", "магистрдьявольскогокульта", "mo dao zu shi", "mdzs", "мдк",
         "grandmaster of demonic cultivation"]),
-    "fandom-tgcf": ("Heaven Official's Blessing (TGCF)", "Благословение небожителей", "fanfic", [
+    "fandom-tgcf": ("Heaven Official's Blessing (TGCF)", "Благословение небожителей", "fandom", [
         "благословение небожителей", "благословениенебожителей", "tian guan ci fu", "tgcf",
         "heaven official's blessing"]),
-    "fandom-black-butler": ("Black Butler", "Тёмный дворецкий", "fanfic", ["темный дворецкий", "темныйдворецкий",
+    "fandom-black-butler": ("Black Butler", "Тёмный дворецкий", "fandom", ["темный дворецкий", "темныйдворецкий",
                                                                           "black butler", "kuroshitsuji"]),
     "crossover": ("Crossover", "Кроссовер", "fanfic", ["кроссовер", "crossover", "кросовер"]),
     "reactions": ("Reaction fics", "Реакции", "fanfic", ["реакции", "реакция", "reactions", "reaction", "реакції"]),
@@ -868,6 +872,7 @@ UK: dict[str, str] = {
     "betrayal": "Зрада", "death": "Смерть / втрата близьких", "dark-past": "Темне минуле",
     "dark-world": "Похмурий світ", "depression": "Депресія / божевілля", "slavery": "Рабство",
     "human-experiments": "Експерименти над людьми", "childcare": "Виховання дітей", "siblings": "Брати і сестри",
+    "mixed-orientation": "Змішана спрямованість", "other-orientation": "Інші види стосунків",
     "pregnancy": "Вагітність", "slow-burn": "Повільна романтика", "early-romance": "Рання романтика",
     "romantic-subplot": "Романтична лінія", "love-interest-first": "Кохана людина закохується першою",
     "lead-falls-first": "ГГ закохується першим", "doting-love": "Віддана кохана людина",

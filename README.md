@@ -6,7 +6,10 @@ Your own catalog of books and web novels from the sites you read. It merges ever
 - **One shared tag list** of about 330 tags, each with an English, Russian and Ukrainian name. «ЛитРПГ», «LitRPG», «LITRPG» and «Lit-RPG» are one tag, and so are «Slow Romance» and «Медленная романтика». Rules add the obvious ones: a LitRPG book also gets "RPG / game elements".
 - **Detects narration** (first, second or third person, or mixed) from each book's opening chapters. For Russian and Ukrainian first-person books it also tells a male narrator from a female one («я пошёл» / «я пошла»).
 - **Finds the same book on different sites** and shares tags between the copies.
-- **Filter and sort by anything**, keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
+- **Search by tags with simple logic**: `Romance −Harem`, `(Isekai | Reincarnation) Magic`, in any language, with suggestions as you type. Every tag has a page with its aliases, parent and child tags, related tags and anti-tags.
+- **Possible tags** found in the opening chapters (system messages, cultivation, dragons…), kept apart from the certain ones.
+- **Fix site labels in bulk**: labels Bookkeeper doesn't recognize are listed most common first, with suggestions. Say once what one means (or hide it) and every book with it follows.
+- **Filter and sort by anything**: fanfiction and fandoms, orientation, age rating (G to NC-21), books not updated for a month or a year, and more. Keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
 - **Downloads** books as **EPUB, FB2 or TXT** for your e-reader. Logged in, downloads include the chapters you bought.
 - **Logs in for you**, and can hand a book to a browser extension such as ExLoader.
 - **18+ books** are collected like any other; one switch hides them.
@@ -119,6 +122,37 @@ Some sites block the server Bookkeeper was built on, so their connectors need pa
 
 The ZIP contains only those pages as the site showed them, plus a short report.
 
+## Searching by tags
+
+Type into the **Tags** field in the library filters. Suggestions appear as you type, in English, Russian or Ukrainian: **Tab** puts one in, **Enter** searches. The buttons under the field add the operators (rest the mouse on one to see what it does), and the line under the field says how your search reads.
+
+| You type | You get |
+|---|---|
+| `Romance` | books with the tag (any name or alias works: Романтика, Любовь…) |
+| `−Romance` or `!Romance` | books without it (also `NOT Romance`, `НЕ Romance`) |
+| `Romance Magic` | both (also `Romance & Magic`, `Romance, Magic`) |
+| `Isekai \| Reincarnation` | either one (also `OR`, `ИЛИ`, `АБО`) |
+| `(Isekai \| Reincarnation) −Harem` | brackets group things |
+| `?System` | has the tag, or possibly has it (found in the opening chapters) |
+| `−?Harem` | not even possibly |
+| `"slow burn"` | a name with spaces (names Bookkeeper knows work without quotes too) |
+| `fandom*` | every tag whose name starts with "fandom" |
+
+The **Fandoms** field works the same way, but every name in it is a fandom. Rest the mouse on any tag for a short description; **About this tag** (or **all tags** above the field) opens its page: names in three languages, aliases, parent tags (broader ones every book with it also gets), child tags (narrower ones that can't appear without it, numbered 1, 2, 2.1…), related tags (usually together in your library) and anti-tags.
+
+**Possible tags.** While reading a book's opening chapters for the narration, Bookkeeper also counts words that point to a tag. Tags that come up often enough are added as *possible* (dotted on the book page, with how strongly they showed up). Plain tag searches ignore them; `?Tag` includes them. Books checked by older versions are read again in the background, a few at a time (switch off **Check narration** in a site's settings to stop that).
+
+## Fixing site labels
+
+Some labels from the sites aren't one of Bookkeeper's shared tags: Wattpad hashtags, character names, series names, typos. Open **Fix site labels** (from **All tags**, the Sites page or a label's own page). It lists those labels, most common first, with:
+
+- **suggestions**: one click says the label means that tag («саске» → Naruto, «ковры на стенах» → Back to the USSR);
+- **Means… type a tag** for anything else, and **+ another tag** when a label means two things («попаданцы в магический мир» → Isekai + Magic);
+- **Hide** for junk labels (site names, years), which removes them from every book;
+- **Undo**, which puts a label back the way Bookkeeper read it before.
+
+A fix applies to every book with that label, written any way («Попаданиевдругоймир», «#попаданиевдругоймир»), and to books that arrive later. When Bookkeeper maps a label to the wrong tag, press ✎ next to it under "Written on the sites as" on the tag's page. Fixes are saved in the `[fixes]` table of `data\my_tags.toml`; **My fixes** lists them all.
+
 ## Your own tags and rules
 
 Open `data\my_tags.toml` in Notepad. It is created on the first start and explains itself. You can:
@@ -170,8 +204,10 @@ uv run python tools/validate_pov.py
 Code layout (`src/bookkeeper/`):
 
 - `sites/`: one connector per site. Each one implements `discover`, `details`, `chapters` and `chapter_text`.
-- `analysis/pov.py`: the narration detector.
-- `tags.py`, `tagdata.py`: the shared tag list (English, Russian and Ukrainian names), synonyms and rules.
+- `analysis/pov.py`: the narration detector. `analysis/themes.py`: possible tags from the opening chapters.
+- `tags.py`, `tagdata.py`, `tagdocs.py`: the shared tag list (English, Russian and Ukrainian names), synonyms, rules, descriptions and anti-tags.
+- `tagquery.py`: the tag search language. `search.py`: library filters, suggestions and tag pages.
+- `labels.py`: fixing site labels for every book at once (the Fix site labels page).
 - `browser.py`: Waterfox (WebDriver BiDi) and Edge (Playwright).
 - `accounts.py`, `secret.py`: logins, saved passwords and sessions (encrypted with Windows DPAPI).
 - `handoff.py`: picking up books downloaded with a browser extension.

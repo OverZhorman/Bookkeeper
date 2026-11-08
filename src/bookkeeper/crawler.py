@@ -16,6 +16,8 @@ import traceback
 
 from . import accounts, config, db, library, matching
 from .analysis.pov import analyse
+from .analysis.themes import VERSION as THEMES_VERSION
+from .analysis.themes import detect as detect_themes
 from .browser import Browser, BrowserUnavailable
 from .db import jdump, jload, now
 from .http import Blocked, Http, NotFound, Stopped
@@ -143,12 +145,18 @@ class SiteWorker(threading.Thread):
         if not self.cls.login_url or time.time() < self._next_account_check:
             return None
         self._next_account_check = time.time() + ACCOUNT_CHECK_HOURS * 3600
-        creds = accounts.credentials(self.site_id) or {}
-        auto = bool(creds.get("password")) and self.cls.login_autofill and \
-            (db.get_setting(f"account:{self.site_id}", {}) or {}).get("auto", True)
         if not accounts.session(self.site_id):
-            return "auto-login" if auto else None
+            return "auto-login" if self._auto_allowed() else None
         return "check"
+
+    def _auto_allowed(self) -> bool:
+        """Log in by itself only with a saved password, and not again after an automatic login failed (a site
+        that shows checks to the hidden window would otherwise be hit every few hours). Any manual login or
+        saving the password again resets this."""
+        st = db.get_setting(f"account:{self.site_id}", {}) or {}
+        creds = accounts.credentials(self.site_id) or {}
+        return bool(creds.get("password")) and self.cls.login_autofill and st.get("auto", True) \
+            and not st.get("auto_failed")
 
     def _account_step(self) -> bool:
         try:
@@ -166,7 +174,12 @@ class SiteWorker(threading.Thread):
                 report("Opening the login page in Waterfox…" if action == "login" else "Logging in…")
                 if self.browser:
                     self.browser.close()  # one browser per profile at a time
-                data = accounts.login_in_browser(cls, interactive=action == "login", report=report)
+                try:
+                    data = accounts.login_in_browser(cls, interactive=action == "login", report=report)
+                except Exception:
+                    if action == "auto-login":
+                        accounts.set_state(sid, auto_failed=True)
+                    raise
                 self._use_session(data, had_session)
             elif action == "import":
                 self.activity = "copying your Waterfox login"
@@ -184,12 +197,16 @@ class SiteWorker(threading.Thread):
                 self.activity = "checking the login"
                 ok = self.site.check_login()
                 if ok is False:
-                    creds = accounts.credentials(sid) or {}
-                    if creds.get("password") and cls.login_autofill:
+                    if self._auto_allowed():
                         report("The login ran out. Logging in again…")
                         if self.browser:
                             self.browser.close()
-                        self._use_session(accounts.login_in_browser(cls, interactive=False, report=report), True)
+                        try:
+                            data = accounts.login_in_browser(cls, interactive=False, report=report)
+                        except Exception:
+                            accounts.set_state(sid, auto_failed=True)
+                            raise
+                        self._use_session(data, True)
                     else:
                         accounts.set_state(sid, state="needed", checked_at=now(),
                                            message="The login has run out. Press “Log in…” to log in again.")
@@ -203,6 +220,7 @@ class SiteWorker(threading.Thread):
         return True
 
     def _use_session(self, data: dict, had_session: bool):
+        previous = accounts.session(self.site_id)
         accounts.save_session(self.site_id, data)
         accounts.clear_applied(self.site, self.http)
         accounts.apply(self.site, self.http)
@@ -211,9 +229,18 @@ class SiteWorker(threading.Thread):
             self.browser.initial_cookies = data.get("cookies") or []
         ok = self.site.check_login()
         if ok is False:
+            # Didn't work: go back to the session we had before (if any), so the page doesn't claim a login.
+            accounts.clear_applied(self.site, self.http)
+            if previous:
+                accounts.save_session(self.site_id, previous)
+                accounts.apply(self.site, self.http)
+            else:
+                accounts.forget_session(self.site_id)
+            if self.browser:
+                self.browser.initial_cookies = (previous or {}).get("cookies") or []
             raise RuntimeError("the site still shows you as logged out")
         who = f" as {data['user']}" if data.get("user") else ""
-        accounts.set_state(self.site_id, state="ok", message=f"Logged in{who}.", checked_at=now())
+        accounts.set_state(self.site_id, state="ok", message=f"Logged in{who}.", checked_at=now(), auto_failed=False)
         self.browser_error = None
         if not had_session and self.cls.lists_adult:
             # A first login can show books the site hides from guests (18+): read the catalog again.
@@ -300,7 +327,9 @@ class SiteWorker(threading.Thread):
         if not texts:
             library.save_analysis(row["id"], None, "no free text to read")
             return
-        library.save_analysis(row["id"], analyse(texts))
+        result = analyse(texts)
+        result["themes"] = detect_themes(texts)  # possible tags from the same opening chapters
+        library.save_analysis(row["id"], result)
 
     def _analysis_step(self, settings) -> bool:
         if self.browser_error:
@@ -315,6 +344,13 @@ class SiteWorker(threading.Thread):
                 "WHERE b.site=? AND a.error LIKE 'temporary:%' AND a.attempts < 3 AND a.at < ? "
                 "ORDER BY b.pop_raw DESC NULLS LAST LIMIT ?",
                 (self.site_id, _hours_ago(6), settings["analysis_per_cycle"])).fetchall()
+        if not rows:  # books read before possible tags existed (or with an older word list): read their opening again
+            rows = db.conn().execute(
+                "SELECT b.id, b.sid, b.title, b.extra FROM books b JOIN analysis a ON a.book_id=b.id "
+                "WHERE b.site=? AND a.error IS NULL AND COALESCE(json_extract(a.details, '$.themes_version'), 0) < ? "
+                "AND (b.adult=0 OR ?) ORDER BY b.pop_raw DESC NULLS LAST, b.id LIMIT ?",
+                (self.site_id, THEMES_VERSION, int(settings["include_adult"]),
+                 settings["analysis_per_cycle"])).fetchall()
         if not rows:
             return False
         for r in rows:
@@ -375,6 +411,7 @@ class Manager:
         for site_id in SITES:
             c.execute("INSERT OR IGNORE INTO sites(id, enabled, updated_at) VALUES(?, 0, ?)", (site_id, now()))
         self._adult_rescan_once()
+        self._age_ratings_once()
         for site_id in SITES:
             # A block from last time may be over: try again on start.
             c.execute("UPDATE sites SET status='idle' WHERE id=? AND status IN ('running','blocked','error')",
@@ -405,6 +442,22 @@ class Manager:
                 c.execute("UPDATE sites SET state=? WHERE id=?",
                           (jdump({k: v for k, v in state.items() if k == "passes"}), site_id))
         db.set_setting("adult_rescan_done", True)
+
+    def _age_ratings_once(self):
+        """Age ratings arrived in 0.4. Ficbook's were already kept with each work, so they are filled in now; sites
+        that list them in the catalog (RanobeLib: a few hundred pages) read it once more from the start."""
+        if db.get_setting("age_ratings_done"):
+            return
+        c = db.conn()
+        c.execute("UPDATE books SET age_rating = json_extract(extra, '$.rating') WHERE site = 'ficbook' "
+                  "AND age_rating IS NULL AND json_extract(extra, '$.rating') IN ('G', 'PG-13', 'R', 'NC-17', 'NC-21')")
+        for site_id, cls in SITES.items():
+            row = c.execute("SELECT state FROM sites WHERE id=?", (site_id,)).fetchone()
+            state = jload(row["state"], {}) if row else {}
+            if cls.age_rescan and state:
+                c.execute("UPDATE sites SET state=? WHERE id=?",
+                          (jdump({k: v for k, v in state.items() if k == "passes"}), site_id))
+        db.set_setting("age_ratings_done", True)
 
     def account_action(self, site_id: str, action: str):
         w = self.workers.get(site_id)

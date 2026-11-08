@@ -278,7 +278,7 @@ def run_download(worker, job) -> None:
             _update(job["id"], progress=i + 1)
         if not texts:
             raise RuntimeError("no chapters could be read (paid, or the site needs a login)")
-        tag_ids = [r[0] for r in c.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=?", (row["id"],))]
+        tag_ids = [r[0] for r in c.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=? AND source != 'maybe'", (row["id"],))]
         data = BookData(row["title"], authors, row["description"], row["lang"], row["url"], tag_ids, texts,
                         _fetch_cover(row["cover"], site.home + "/"))
         path = config.DOWNLOADS_DIR / filename

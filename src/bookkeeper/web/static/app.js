@@ -18,11 +18,17 @@ function h(tag, attrs = {}, ...kids) {
   }
   return el;
 }
+// The server's own words when something fails ({"detail": …} from the API), not the raw response.
+async function failure(r) {
+  let text = await r.text();
+  try { const j = JSON.parse(text); text = j.detail || j.error || text; } catch { /* not JSON */ }
+  return new Error(typeof text === "string" ? text : JSON.stringify(text));
+}
 const api = {
-  async get(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${await r.text()}`); return r.json(); },
+  async get(url) { const r = await fetch(url); if (!r.ok) throw await failure(r); return r.json(); },
   async send(method, url, body) {
     const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await failure(r);
     return r.json();
   },
   post(url, body) { return this.send("POST", url, body || {}); },
@@ -32,6 +38,8 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem("bk:" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("bk:" + k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
+// Replace an element's children, skipping the empty (null / false) ones.
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
@@ -49,7 +57,16 @@ const STATUS = { completed: "Completed", ongoing: "Ongoing", frozen: "Frozen / a
 const ACCESS = { free: "Free", partial: "Partly free", paid: "Paid" };
 const LANGS = { ru: "Russian", en: "English", uk: "Ukrainian" };
 const SHELVES = { want: "Want to read", reading: "Reading", read: "Read", dropped: "Dropped", hidden: "Hidden" };
-const CATS = { narration: "Narration", genre: "Genres", theme: "Themes & tropes", protagonist: "Protagonist", setting: "Setting", relationship: "Relationships", content: "Content", format: "Format", origin: "Origin", demographic: "Audience", fanfic: "Fanfiction", other: "Other tags (as written on the site)" };
+const CATS = { narration: "Narration", genre: "Genres", theme: "Themes & tropes", protagonist: "Protagonist", setting: "Setting", orientation: "Orientation", relationship: "Relationships", content: "Content", format: "Format", origin: "Origin", demographic: "Audience", fandom: "Fandoms", fanfic: "Fanfiction", other: "Other tags (as written on the site)" };
+const AGES = [
+  ["G", "G", "For everyone."],
+  ["PG-13", "PG-13", "Teens and up (12+ / 13+): some violence or romance, nothing explicit."],
+  ["R", "R", "16+: violence, sex scenes without explicit detail."],
+  ["NC-17", "NC-17", "18+: explicit sex or violence."],
+  ["NC-21", "NC-21", "21+: extreme content."],
+  ["unknown", "Not rated", "The site gives no age rating (books marked 18+ count as NC-17)."],
+];
+const UPDATED = [["7", "a week"], ["30", "a month"], ["91", "3 months"], ["182", "half a year"], ["365", "a year"], ["730", "2 years"]];
 const SORTS = [["popularity", "Popularity"], ["rating", "Rating"], ["likes", "Likes"], ["updated", "Recently updated"], ["added", "Recently added"], ["words", "Length"], ["chapters", "Chapters"], ["title", "Title"], ["relevance", "Best match"], ["random", "Random"]];
 const LENGTHS = [["", "Any length"], ["0-20000", "Short (under 20k words)"], ["20000-80000", "Medium (20–80k)"], ["80000-300000", "Long (80–300k)"], ["300000-", "Epic (300k+)"]];
 
@@ -77,7 +94,15 @@ $("#theme-btn").addEventListener("click", () => {
 applyTheme();
 
 // ---------- routing ----------
-const LIST_KEYS = ["pov", "narrator", "tags", "any", "not", "sites", "lang", "status", "access", "pov_source"];
+const LIST_KEYS = ["pov", "narrator", "sites", "lang", "status", "access", "pov_source", "orient", "age"];
+// A tag id as it goes into the Tags field (quoted when it has spaces or symbols the field reads as operators).
+const qtok = (id) => /[\s()|&,"«»]|^[-!?−]|\*$/.test(id) ? `"${id}"` : id;
+function fromLists(must, anyof, exclude) {
+  const parts = must.map(qtok);
+  if (anyof.length) parts.push(anyof.length > 1 ? "(" + anyof.map(qtok).join(" | ") + ")" : qtok(anyof[0]));
+  parts.push(...exclude.map((t) => "-" + qtok(t)));
+  return parts.join(" ");
+}
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, "");
   const [path, query] = raw.split("?");
@@ -92,6 +117,10 @@ function toQuery(obj) {
 function readFilters(params) {
   const f = { ...params };
   for (const k of LIST_KEYS) f[k] = f[k] ? f[k].split(",").filter(Boolean) : [];
+  // Searches saved before 0.4 kept tags in three lists (must have / any of / exclude): read them as a query.
+  const list = (v) => (v ? String(v).split(",").filter(Boolean) : []);
+  if (!f.tq && (f.tags || f.any || f.not)) f.tq = fromLists(list(f.tags), list(f.any), list(f.not));
+  delete f.tags; delete f.any; delete f.not;
   return f;
 }
 function setFilters(next, keepBook = false) {
@@ -124,6 +153,9 @@ async function route() {
     if (view === "sites") renderSites();
     else if (view === "downloads") renderDownloads();
     else if (view === "help") renderHelp();
+    else if (view === "tag" && params.id) renderTag(params.id);
+    else if (view === "tags") renderAllTags();
+    else if (view === "labels") renderLabels();
     else renderLibrary();
   }
 }
@@ -173,7 +205,24 @@ async function renderFilters() {
         chip(l, filters.pov_source.includes(v), () => toggleIn("pov_source", v)))))),
     filters.pov.length || filters.narrator.length || filters.pov_source.length ? h("button", { onclick: () => setFilters({ ...filters, pov: [], narrator: [], pov_source: [] }) }, "clear") : null));
 
-  groups.push(fgroup("Tags", tagPicker(), (filters.tags.length || filters.any.length || filters.not.length) ? h("button", { onclick: () => setFilters({ ...filters, tags: [], any: [], not: [] }) }, "clear") : null));
+  groups.push(fgroup("Tags", queryBox("tq", { placeholder: "Romance −Harem, (Isekai | Reincarnation)…" }),
+    h("span", { class: "gactions" }, h("a", { href: "#/tags", title: "Every tag, with what it means and how tags relate" }, "all tags"),
+      filters.tq ? h("button", { onclick: () => updateFilter("tq", "") }, "clear") : null)));
+
+  groups.push(fgroup("Fanfiction", h("div", {},
+    h("div", { class: "chips" }, [["", "Both", "Original works and fanfiction"], ["original", "Original works", "Books that aren't fanfiction"], ["fanfic", "Fanfiction", "Fanfiction of any fandom"]].map(([k, l, tip]) =>
+      chip(l, (filters.kind || "") === k, () => updateFilter("kind", k), "", tip))),
+    h("div", { class: "field" }, h("label", {}, "Fandoms — works the same way as tags"),
+      queryBox("fq", { fandom: true, placeholder: "Harry Potter | Naruto, −Genshin…" }))),
+    filters.kind || filters.fq ? h("button", { onclick: () => setFilters({ ...filters, kind: "", fq: "" }) }, "clear") : null));
+
+  groups.push(fgroup("Orientation", h("div", { class: "chips" }, (meta.orientations || []).map((o) =>
+    withHover(chip(tagLabel(o), filters.orient.includes(o.id), () => toggleIn("orient", o.id)), o.id))),
+    filters.orient.length ? h("button", { onclick: () => updateFilter("orient", []) }, "clear") : null));
+
+  groups.push(fgroup("Age rating", h("div", { class: "chips" }, AGES.map(([k, l, tip]) =>
+    chip(l, filters.age.includes(k), () => toggleIn("age", k), "", tip))),
+    filters.age.length ? h("button", { onclick: () => updateFilter("age", []) }, "clear") : null));
 
   const siteIds = Object.keys(meta.sites);
   groups.push(fgroup("Sites", h("div", {}, siteIds.map((s) =>
@@ -194,8 +243,16 @@ async function renderFilters() {
       h("div", { class: "field" }, h("label", {}, "Min chapters"), h("input", { class: "input", type: "number", min: 0, value: filters.min_chapters || "", onchange: (e) => updateFilter("min_chapters", e.target.value) })),
       h("div", { class: "field" }, h("label", {}, "Min rating (0–10)"), h("input", { class: "input", type: "number", min: 0, max: 10, step: 0.5, value: filters.min_rating || "", onchange: (e) => updateFilter("min_rating", e.target.value) }))))));
 
-  groups.push(fgroup("Updated", h("div", { class: "chips" },
-    [["", "Any time"], ["7", "This week"], ["30", "This month"], ["365", "This year"]].map(([k, v]) => chip(v, (filters.updated_within || "") === k, () => updateFilter("updated_within", k))))));
+  const anyTime = !filters.updated_within && !filters.stale;
+  groups.push(fgroup("Updated", h("div", {},
+    h("div", { class: "chips" }, chip("Any time", anyTime, () => setFilters({ ...filters, updated_within: "", stale: "" }))),
+    h("div", { class: "field" }, h("label", {}, "Updated within the last"),
+      h("div", { class: "chips" }, UPDATED.filter(([k]) => +k <= 365).map(([k, v]) =>
+        chip(v, filters.updated_within === k, () => setFilters({ ...filters, updated_within: filters.updated_within === k ? "" : k, stale: "" }))))),
+    h("div", { class: "field" }, h("label", {}, "Not updated for at least"),
+      h("div", { class: "chips" }, UPDATED.map(([k, v]) =>
+        chip(v, filters.stale === k, () => setFilters({ ...filters, stale: filters.stale === k ? "" : k, updated_within: "" }), "",
+          `Books whose last update was more than ${v} ago (books without a known date are left out)`)))))));
 
   groups.push(fgroup("My shelves", h("div", { class: "chips" },
     [["", "Everything"], ["unread", "Not read yet"], ["want", "Want to read"], ["reading", "Reading"], ["read", "Read"], ["favorite", "★ Favourites"], ["dropped", "Dropped"], ["hidden", "Hidden"]].map(([k, v]) =>
@@ -213,44 +270,246 @@ async function renderFilters() {
   el.replaceChildren(...groups);
 }
 
-function tagPicker() {
-  let mode = store.get("tagMode", "tags");
-  const wrap = h("div", { class: "tagbox" });
-  const modeSwitch = h("div", { class: "mode-switch" }, [["tags", "Must have"], ["any", "Any of"], ["not", "Exclude"]].map(([k, l]) =>
-    h("button", { class: mode === k ? "on" : "", onclick: (e) => { mode = k; store.set("tagMode", k); [...modeSwitch.children].forEach((b) => b.classList.toggle("on", b === e.target)); } }, l)));
-  const input = h("input", { class: "input", placeholder: "Type a tag: LitRPG, попаданцы, harem…", autocomplete: "off" });
+// ---------- the Tags and Fandoms fields ----------
+const OPS = [
+  ["not", "−", "without", "Without: −Harem (or !Harem, NOT Harem) leaves out books with the tag. On a word you already typed, it switches it."],
+  ["or", "|", "or", "Either: Isekai | Reincarnation shows books with at least one of them (OR / ИЛИ work too)."],
+  ["and", "&", "and", "Both: Romance & Magic shows books with both. A space or a comma means the same."],
+  ["group", "( )", "group", "Brackets group things: (Isekai | Reincarnation) −Harem. With text selected, puts it in brackets."],
+  ["maybe", "?", "possibly", "Possibly: ?System also counts books whose opening chapters suggest the tag. Plain tags count only certain ones."],
+  ["quote", "“ ”", "exact", "A name with spaces in quotes: \"slow burn\". Names Bookkeeper knows work without quotes too."],
+  ["prefix", "*", "starts with", "Starts with: fandom* matches every tag whose name starts with “fandom”."],
+];
+const QUERY_HELP = [
+  ["Romance", "books with the tag — any name or alias works: Романтика, Любовь…"],
+  ["−Romance   !Romance", "books without it (also NOT Romance, НЕ Romance)"],
+  ["Romance Magic", "both (also Romance & Magic, Romance, Magic)"],
+  ["Isekai | Reincarnation", "either one (also OR, ИЛИ, АБО)"],
+  ["(Isekai | Reincarnation) −Harem", "brackets group things"],
+  ["?System", "has the tag, or possibly has it (found in the opening chapters)"],
+  ["−?Harem", "not even possibly"],
+  ["\"slow burn\"", "a name with spaces; names Bookkeeper knows work without quotes too"],
+  ["fandom*", "every tag whose name starts with “fandom”"],
+];
+let refocus = null;  // the field to focus again after the library redraws (after Enter)
+let openSuggest = null;  // repositions the open suggestion list when the filters scroll
+
+// Suggestion lists float over the page (wider than a narrow field), under the field or above it when there's no room.
+function placeList(box, input) {
+  const r = input.getBoundingClientRect();
+  const w = Math.min(Math.max(r.width, 420), innerWidth - 16);
+  const below = innerHeight - r.bottom - 12;
+  Object.assign(box.style, { width: `${w}px`, left: `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px` });
+  if (below < 240 && r.top > below) Object.assign(box.style, { top: "", bottom: `${innerHeight - r.top + 4}px`, maxHeight: `${Math.min(380, r.top - 12)}px` });
+  else Object.assign(box.style, { bottom: "", top: `${r.bottom + 4}px`, maxHeight: `${Math.min(380, below)}px` });
+}
+
+function addToQuery(t, how = "") {
+  const key = t.category === "fandom" ? "fq" : "tq";
+  const cur = (filters[key] || "").trim();
+  const tok = how + qtok(t.id);
+  setFilters({ ...filters, [key]: cur ? `${cur} ${tok}` : tok });
+}
+
+function otherName(t) {
+  const shown = tagLabel(t);
+  const alt = tagLang === "en" ? (t.label_ru || t.label_uk) : t.label;
+  return alt && alt !== shown ? h("span", { class: "ru" }, alt) : null;
+}
+
+function queryBox(key, { fandom = false, placeholder = "" } = {}) {
+  const input = h("input", { class: "input", placeholder, autocomplete: "off", spellcheck: "false", "aria-label": fandom ? "Fandoms" : "Tags" });
+  input.value = filters[key] || "";
   const box = h("div", { class: "suggest hidden" });
-  let opts = [], sel = -1;
-  const pick = (t) => { if (!t) return; const list = new Set(filters[mode] || []); list.add(t.id); input.value = ""; box.classList.add("hidden"); updateFilter(mode, [...list]); };
-  const show = debounce(async () => {
-    const q = input.value.trim();
-    try { opts = await api.get(`/api/tags?q=${encodeURIComponent(q)}&limit=25`); } catch { opts = []; }
-    sel = -1;
-    box.replaceChildren(...opts.map((t, i) => h("div", { class: "opt", onmousedown: (e) => { e.preventDefault(); pick(t); } },
-      h("span", {}, tagLabel(t)), t.label_ru && tagLang !== "ru" ? h("span", { class: "ru" }, t.label_ru) : null, h("span", { class: "n" }, fmtNum(t.books)))));
+  const reads = h("div", { class: "reads" });
+  const help = h("div", { class: "qhelp hidden" },
+    h("table", {}, QUERY_HELP.map(([ex, what]) => h("tr", {}, h("td", {}, h("code", {}, ex)), h("td", {}, what)))),
+    h("div", { class: "faint", style: { marginTop: "4px" } }, "Tab completes a name, Enter searches. Possible tags (dotted on the book page) only count with ?."));
+  let opts = [], sel = -1, seg = null, caret = null, blurTimer = null, quiet = false;
+
+  const apply = (again) => {
+    const v = input.value.trim();
+    box.classList.add("hidden");
+    if (v === (filters[key] || "")) return;
+    filters = { ...filters, [key]: v };  // first, so a click elsewhere that took the focus sees the new value
+    refocus = again ? key : null;
+    setFilters(filters);
+  };
+  const range = () => (document.activeElement === input ? [input.selectionStart, input.selectionEnd] : caret || [input.value.length, input.value.length]);
+
+  // What is being typed at the caret: the last one to three words since a bracket, | or &, or the inside of "…".
+  const segment = () => {
+    const end = range()[0];
+    const before = input.value.slice(0, end);
+    if ((before.match(/"/g) || []).length % 2) {
+      const start = before.lastIndexOf('"');
+      return { start, end, text: before.slice(start + 1), quoted: true, words: [] };
+    }
+    if (!before.trim()) return { start: end, end, text: "", quoted: false, words: [] };
+    if (/\s$/.test(before)) return null;
+    const cut = Math.max(...'()|&,"«»'.split("").map((c) => before.lastIndexOf(c))) + 1;
+    const words = [...before.slice(cut).matchAll(/\S+/g)].map((m) => ({ text: m[0], at: cut + m.index }));
+    const take = [];
+    for (let i = words.length - 1; i >= 0 && take.length < 3; i--) {
+      const lead = words[i].text.match(/^[-!?−]*/)[0].length;  // −Harem, ?System: the name starts after the mark
+      take.unshift({ text: words[i].text.slice(lead), at: words[i].at + lead });
+      if (lead) break;
+    }
+    const named = take.filter((w) => w.text);
+    if (!named.length || named[named.length - 1].text.endsWith("*")) return null;
+    return { start: named[0].at, end, text: named.map((w) => w.text).join(" "), quoted: false, words: named };
+  };
+
+  const place = () => placeList(box, input);
+  const draw = () => {
+    openSuggest = place;
+    place();
+    box.replaceChildren(...opts.map((o, i) => h("div", { class: `opt ${i === sel ? "sel" : ""}`, onmousedown: (e) => { e.preventDefault(); insert(o); } },
+      h("div", { class: "l1" }, h("span", { class: "name" }, tagLabel(o)), otherName(o),
+        o.matched && o.matched.toLowerCase() !== tagLabel(o).toLowerCase() ? h("span", { class: "alias" }, `≈ ${o.matched}`) : null,
+        h("span", { class: "n" }, fmtNum(o.books || 0))),
+      o.description ? h("div", { class: "d" }, o.description) : null)),
+    h("div", { class: "foot" }, "Tab or click: insert · ↑ ↓: choose · Enter: search"));
     box.classList.toggle("hidden", !opts.length);
-  }, 150);
-  input.addEventListener("input", show);
-  input.addEventListener("focus", show);
-  input.addEventListener("blur", () => setTimeout(() => box.classList.add("hidden"), 150));
+  };
+
+  const suggest = debounce(async () => {
+    seg = segment();
+    if (!seg) { box.classList.add("hidden"); return; }
+    const asked = input.value;
+    const q = new URLSearchParams({ text: seg.text, lang: tagLang, fandom: fandom ? 1 : 0, quoted: seg.quoted ? 1 : 0, limit: 12 });
+    try { opts = await api.get("/api/tags/complete?" + q); } catch { opts = []; }
+    if (asked !== input.value || document.activeElement !== input) return;
+    sel = -1;
+    draw();
+  }, 120);
+
+  const explain = debounce(async () => {
+    const v = input.value.trim();
+    if (!v) {
+      reads.replaceChildren(h("span", { class: "faint" }, fandom ? "Type a fandom, or several: Naruto | Bleach" : "Type a tag. Space = and, | = or, − = without"));
+      return;
+    }
+    let r;
+    try { r = await api.get("/api/tagquery?" + new URLSearchParams({ q: v, lang: tagLang, fandom: fandom ? 1 : 0 })); } catch { return; }
+    if (input.value.trim() !== v) return;
+    fill(reads,
+      h("div", {}, h("span", { class: "faint" }, "Reads as: "), r.text || "—"),
+      r.unknown.length ? h("div", { class: "warn" }, `No ${fandom ? "fandom" : "tag"} called ${r.unknown.map((u) => `“${u}”`).join(", ")} yet, so ${r.unknown.length === 1 ? "it matches" : "they match"} nothing. Pick a name from the suggestions (Tab).`) : null,
+      v !== (filters[key] || "") ? h("div", { class: "hint" }, "Press Enter to search") : null);
+  }, 200);
+
+  const insert = (o) => {
+    if (!o || !seg) return;
+    const v = input.value;
+    let start = seg.start, end = seg.end;
+    if (seg.quoted && v[end] === '"') end++;
+    if (!seg.quoted && seg.words.length && o.replace_words) start = seg.words[Math.max(0, seg.words.length - o.replace_words)].at;
+    const rest = v.slice(end).replace(/^\s+/, "");
+    input.value = v.slice(0, start) + o.insert + " " + rest;
+    const pos = start + o.insert.length + 1;
+    input.focus();
+    input.setSelectionRange(pos, pos);
+    box.classList.add("hidden");
+    explain();
+  };
+
+  // The word (or "quoted name") around a position, with its − ! ? marks.
+  const wordAt = (v, pos) => {
+    let s, e;
+    const quotes = (v.slice(0, pos).match(/"/g) || []).length;
+    if (quotes % 2) { s = v.lastIndexOf('"', pos - 1); e = v.indexOf('"', pos); e = e < 0 ? v.length : e + 1; }
+    else if (v[pos - 1] === '"') { s = v.lastIndexOf('"', pos - 2); e = pos; }
+    else {
+      s = pos; e = pos;
+      while (s > 0 && !/[\s()|&,"]/.test(v[s - 1])) s--;
+      while (e < v.length && !/[\s()|&,"]/.test(v[e])) e++;
+      return [s, e];
+    }
+    while (s > 0 && /[-!?−]/.test(v[s - 1])) s--;
+    return [Math.max(0, s), e];
+  };
+  const op = (kind) => {
+    const v = input.value;
+    const [a, b] = range();
+    let next = v, pos = a;
+    const gap = (i) => (i > 0 && !/[\s(]/.test(v[i - 1]) ? " " : "");
+    if (kind === "not" || kind === "maybe" || kind === "prefix") {
+      const [s, e] = a === b ? wordAt(v, a) : [a, a];
+      if (s < e) {  // on a word: switch its mark
+        const word = v.slice(s, e);
+        const lead = word.match(/^[-!?−]*/)[0];
+        let name = word.slice(lead.length), neg = /[-!−]/.test(lead), maybe = lead.includes("?");
+        if (kind === "not") neg = !neg;
+        else if (kind === "maybe") maybe = !maybe;
+        else if (!name.startsWith('"')) name = name.endsWith("*") ? name.slice(0, -1) : name + "*";
+        const nw = (neg ? "-" : "") + (maybe ? "?" : "") + name;
+        next = v.slice(0, s) + nw + v.slice(e);
+        pos = s + nw.length;
+      } else {  // between words: put the mark down for the next one
+        const ins = (kind === "prefix" ? "" : gap(a)) + { not: "-", maybe: "?", prefix: "*" }[kind];
+        next = v.slice(0, a) + ins + v.slice(b);
+        pos = a + ins.length;
+      }
+    } else if (kind === "or" || kind === "and") {
+      const left = v.slice(0, a).replace(/\s+$/, ""), right = v.slice(b).replace(/^\s+/, "");
+      const sym = !left ? (kind === "or" ? "| " : "& ") : (kind === "or" ? " | " : " & ");
+      next = left + sym + right;
+      pos = left.length + sym.length;
+    } else {
+      const [o, c] = kind === "group" ? ["(", ")"] : ['"', '"'];
+      const pre = a === b ? gap(a) : "";
+      next = v.slice(0, a) + pre + o + v.slice(a, b) + c + v.slice(b);
+      pos = a === b ? a + pre.length + 1 : b + 2;
+    }
+    input.value = next;
+    input.focus();
+    input.setSelectionRange(pos, pos);
+    explain();
+    suggest();
+  };
+  // Buttons act on mouse-down so the field keeps its focus and caret (and on Enter/Space from the keyboard).
+  const press = (fn) => ({ onmousedown: (e) => { e.preventDefault(); fn(); }, onclick: (e) => { if (e.detail === 0) fn(); } });
+  const ops = h("div", { class: "ops" },
+    OPS.map(([kind, sym, word, tip]) => h("button", { type: "button", title: tip, ...press(() => op(kind)) }, h("b", {}, sym), " ", word)),
+    h("button", { type: "button", class: "ghost", title: "Empty the field and search again", ...press(() => { input.value = ""; apply(false); explain(); }) }, "clear"),
+    h("button", { type: "button", class: "ghost", title: "How to write a tag search", ...press(() => help.classList.toggle("hidden")) }, "help"));
+
+  const remember = () => { caret = [input.selectionStart, input.selectionEnd]; };
+  input.addEventListener("input", () => { suggest(); explain(); });
+  input.addEventListener("focus", () => { clearTimeout(blurTimer); if (!quiet) suggest(); quiet = false; });
+  ["keyup", "click", "select"].forEach((ev) => input.addEventListener(ev, remember));
+  input.addEventListener("click", suggest);
+  input.addEventListener("blur", () => {
+    remember();
+    box.classList.add("hidden");
+    // Leaving the field searches too, unless the click that took the focus does that itself.
+    const v = input.value.trim();
+    if (v !== (filters[key] || "")) {
+      filters = { ...filters, [key]: v };
+      blurTimer = setTimeout(() => {
+        const { view, params } = parseHash();
+        if (view === "library" && (params[key] || "") !== v) setFilters(filters);
+      }, 220);
+    }
+  });
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault(); sel = Math.max(0, Math.min(opts.length - 1, sel + (e.key === "ArrowDown" ? 1 : -1)));
-      [...box.children].forEach((c, i) => c.classList.toggle("sel", i === sel));
-    } else if (e.key === "Enter") { e.preventDefault(); pick(opts[sel >= 0 ? sel : 0]); }
+    const open = !box.classList.contains("hidden") && opts.length > 0;
+    if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      sel = sel < 0 ? (d > 0 ? 0 : opts.length - 1) : (sel + d + opts.length) % opts.length;
+      draw();
+    } else if (open && e.key === "Tab" && !e.shiftKey) { e.preventDefault(); insert(opts[Math.max(0, sel)]); }
+    else if (e.key === "Enter") { e.preventDefault(); if (open && sel >= 0) insert(opts[sel]); else apply(true); }
+    else if (e.key === "Escape" && open) { e.stopPropagation(); box.classList.add("hidden"); }
   });
-  const selected = h("div", { class: "chips", style: { marginTop: "8px" } });
-  const addChips = (key, cls, prefix) => (filters[key] || []).forEach((id) => {
-    const c = h("span", { class: `chip ${cls}`, title: "Click to remove", onclick: () => toggleIn(key, id) }, prefix, h("span", { "data-tag": id }, id), h("span", { class: "x" }, "×"));
-    selected.append(c);
-  });
-  addChips("tags", "inc", "+ "); addChips("any", "any", "≈ "); addChips("not", "exc", "− ");
-  // replace ids with readable labels
-  selected.querySelectorAll("[data-tag]").forEach(async (s) => {
-    try { const t = await api.get(`/api/tags/${encodeURIComponent(s.dataset.tag)}`); s.textContent = tagLabel(t); } catch { /* keep id */ }
-  });
-  wrap.append(modeSwitch, input, box, selected);
-  return wrap;
+  explain();
+  if (refocus === key) {
+    refocus = null;
+    requestAnimationFrame(() => { quiet = true; input.focus(); input.setSelectionRange(input.value.length, input.value.length); });
+  }
+  return h("div", { class: "qbox" }, h("div", { class: "tagbox" }, input, box), ops, reads, help);
 }
 
 function renderToolbar() {
@@ -273,6 +532,8 @@ function renderToolbar() {
 function activeFilters() {
   const parts = [];
   if (filters.q) parts.push(chip(`“${filters.q}” ×`, true, () => setFilters({ ...filters, q: "", sort: filters.sort === "relevance" ? "" : filters.sort })));
+  if (filters.tq) parts.push(chip(`Tags: ${filters.tq} ×`, true, () => updateFilter("tq", ""), "", "Remove the tag search"));
+  if (filters.fq) parts.push(chip(`Fandoms: ${filters.fq} ×`, true, () => updateFilter("fq", ""), "", "Remove the fandom search"));
   const any = Object.entries(filters).some(([k, v]) => k !== "sort" && k !== "order" && (Array.isArray(v) ? v.length : v));
   if (any) parts.push(h("button", { class: "btn small ghost", onclick: () => setFilters({ sort: filters.sort || "" }) }, "Reset all filters"));
   return h("div", { class: "active-filters" }, parts);
@@ -349,8 +610,11 @@ function coverEl(b) {
 }
 function tagMini(t) {
   const derived = !t.sources.includes("site") && !t.sources.includes("user");
-  return h("span", { class: `mini-tag ${derived ? "derived" : ""}`, title: derived ? `Added by Bookkeeper (${t.sources.map((s) => SRC[s] ? SRC[s][1] : s).join(", ")})` : "" }, tagLabel(t));
+  const why = t.maybe ? "Possible tag: found in the opening chapters, not certain."
+    : derived ? `Added by Bookkeeper (${t.sources.map((s) => SRC[s] ? SRC[s][1] : s).join(", ")}).` : "";
+  return withHover(h("span", { class: `mini-tag ${t.maybe ? "maybe" : derived ? "derived" : ""}` }, tagLabel(t)), t.id, why);
 }
+const ageBadge = (b) => b.adult ? h("span", { class: "adult-badge", title: `Age rating ${b.age_rating || "NC-17"}` }, b.age_rating === "NC-21" ? "21+" : "18+") : null;
 function statsLine(b) {
   return [b.words ? `${fmtNum(b.words)} words` : null, b.chapters ? `${b.chapters} ch.` : null, b.status && b.status !== "unknown" ? STATUS[b.status] : null,
     b.rating ? `★ ${b.rating.toFixed(1)}` : null, b.likes ? `♥ ${fmtNum(b.likes)}` : null].filter(Boolean);
@@ -360,7 +624,7 @@ function siteBadges(b) {
 }
 function renderCard(b) {
   const c = coverEl(b);
-  c.append(h("div", { class: "badges" }, povBadge(b.pov, b.pov_source), b.adult ? h("span", { class: "adult-badge", title: "18+" }, "18+") : null));
+  c.append(h("div", { class: "badges" }, povBadge(b.pov, b.pov_source), ageBadge(b)));
   if (b.favorite) c.append(h("span", { class: "fav" }, "★"));
   return h("article", { class: "card", onclick: () => setFilters({ ...filters, book: b.id }, true) },
     c,
@@ -375,7 +639,7 @@ function renderRow(b) {
     coverEl(b),
     h("div", {},
       h("div", { class: "title" }, b.title, b.favorite ? " ★" : ""),
-      h("div", { class: "line" }, h("span", { class: "muted" }, (b.authors || []).join(", ")), povBadge(b.pov, b.pov_source), b.adult ? h("span", { class: "adult-badge" }, "18+") : null, siteBadges(b),
+      h("div", { class: "line" }, h("span", { class: "muted" }, (b.authors || []).join(", ")), povBadge(b.pov, b.pov_source), ageBadge(b), siteBadges(b),
         b.shelf ? h("span", { class: "pill" }, SHELVES[b.shelf] || b.shelf) : null),
       h("div", { class: "line" }, (b.tags || []).slice(0, 10).map(tagMini)),
       h("div", { class: "snippet" }, b.snippet || ""),
@@ -471,16 +735,22 @@ function renderBook(d) {
     h("div", { class: "chips" }, byCat[c].map((t) => {
       const own = t.sources.includes("site") || t.sources.includes("user");
       const srcText = t.sources.map((s) => SRC[s] ? SRC[s][1] : s).join("; ") + (t.raw.length ? ` — on the site: “${t.raw.join("”, “")}”` : "");
-      return h("span", { class: `chip ${own ? "" : "derived"}`, style: own ? {} : { borderStyle: "dashed" }, title: `${srcText}. Click to show books with this tag.`,
-        onclick: () => setFilters({ ...filters, tags: [...new Set([...(filters.tags || []), t.id])] }) },
-        tagLabel(t), h("span", { class: "tag-src" }, t.sources.map((s) => SRC[s] ? SRC[s][0] : s).join("+")));
+      return withHover(h("span", { class: `chip ${own ? "" : "derived"}`, onclick: (e) => addToQuery(t, e.shiftKey ? "-" : "") },
+        tagLabel(t), h("span", { class: "tag-src" }, t.sources.map((s) => SRC[s] ? SRC[s][0] : s).join("+"))), t.id, `${srcText}. Click: books with this tag · Shift+click: books without it.`);
     }))));
+  const possible = d.possible_tags || [];
+  if (possible.length) {
+    tagSections.push(h("div", { class: "tagcat" }, h("div", { class: "cat" }, "Possible tags — found in the opening chapters, not certain"),
+      h("div", { class: "chips" }, possible.map((t) => withHover(h("span", { class: "chip maybe", onclick: (e) => addToQuery(t, e.shiftKey ? "-?" : "?") },
+        tagLabel(t), h("span", { class: "tag-src" }, `${Math.round((t.score || 0) * 100)}%`)), t.id,
+        `${t.why ? `Mentioned ${t.why} in the opening chapters; ` : ""}the % is how strongly. Tag searches count it only with ?${qtok(t.id)}. Click: books that possibly have it.`)))));
+  }
 
   const facts = [
     ["Site", siteName(d.site)], ["Status", STATUS[d.status] || "—"], ["Chapters", d.chapters ?? "—"], ["Length", d.words ? `${fmtNum(d.words)} words` : "—"],
     ["Rating", d.rating ? `${d.rating.toFixed(1)} / 10${d.votes ? ` (${fmtNum(d.votes)})` : ""}` : "—"], ["Likes", fmtNum(d.likes)], ["Views", fmtNum(d.views)],
     ["Access", ACCESS[d.access] || "—"], ["Language", LANGS[d.lang] || d.lang || "—"], ["Type", d.is_translation === 1 ? "Translation" : d.is_translation === 0 ? "Original" : "—"],
-    ["Updated", fmtDate(d.updated_at)], ["Added to library", fmtDate(d.added_at)],
+    ["Age rating", d.age_rating || "Not rated"], ["Updated", fmtDate(d.updated_at)], ["Added to library", fmtDate(d.added_at)],
   ];
   if (d.extra && d.extra.series) facts.splice(1, 0, ["Series", d.extra.series]);
 
@@ -488,7 +758,7 @@ function renderBook(d) {
   note.value = d.note || "";
   note.addEventListener("change", async () => { await api.post(`/api/books/${d.id}/user`, { note: note.value }); toast("Note saved"); });
 
-  $("#drawer-inner").replaceChildren(
+  fill($("#drawer-inner"),
     h("button", { class: "icon-btn close", title: "Close (Esc)", onclick: () => closeDrawer() }, "✕"),
     h("div", { class: "dhead" }, coverEl(d),
       h("div", {},
@@ -508,7 +778,8 @@ function renderBook(d) {
       handoffBox(d)),
     d.description ? h("div", { class: "section" }, h("h3", {}, "Description"), h("div", { class: "desc" }, d.description)) : null,
     h("div", { class: "section" }, h("h3", {}, "Tags"), tagSections.length ? tagSections : h("p", { class: "muted" }, "No tags yet."),
-      h("div", { class: "legend" }, h("span", {}, "solid: written on the site"), h("span", {}, "dashed: added by Bookkeeper (rules, text, other copies)"))),
+      h("div", { class: "legend" }, h("span", {}, "solid: written on the site"), h("span", {}, "dashed: added by Bookkeeper (rules, text, other copies)"),
+        h("span", {}, "dotted: possible"), h("span", {}, "click a tag to search with it, Shift+click to leave it out"))),
     h("div", { class: "section" }, h("h3", {}, "Details"), h("div", { class: "facts" }, facts.map(([k, v]) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, String(v)))))),
     d.recommendations.length ? h("div", { class: "section" }, h("h3", {}, "Recommended on forums"), h("ul", {}, d.recommendations.map((r) => h("li", {}, h("a", { href: r.post_url, target: "_blank" }, `${r.source}${r.at ? ", " + fmtDate(r.at) : ""}`))))) : null,
     h("div", { class: "section" }, h("h3", {}, "My notes"), note));
@@ -576,7 +847,8 @@ async function drawSites(first) {
           h("td", { id: `test-${p.id}`, style: { minWidth: "260px" } }, testCell(p.id))))),
       h("div", { style: { marginTop: "18px", display: "flex", gap: "8px", flexWrap: "wrap" } },
         h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/match"); toast("Looking for the same books on different sites…"); } }, "Find the same books across sites now"),
-        h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/retag"); toast("Re-applying tag rules in the background…"); } }, "Re-apply my tag rules")));
+        h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/retag"); toast("Re-applying tag rules in the background…"); } }, "Re-apply my tag rules"),
+        h("a", { class: "btn", href: "#/labels", title: "Say what the most common unrecognized site labels mean" }, "Fix site labels")));
   }
 }
 function testCell(siteId) {
@@ -666,7 +938,10 @@ function accountBox(s) {
     const pwd = h("input", { class: "input", type: "password", placeholder: a.has_password ? "Saved (leave empty to keep it)" : "Password", autocomplete: "new-password" });
     const auto = h("input", { type: "checkbox", checked: a.auto_pref !== false });
     parts.push(h("details", { class: "settings", open: openAccount.has(s.id), ontoggle: (e) => e.target.open ? openAccount.add(s.id) : openAccount.delete(s.id) },
-      h("summary", {}, a.has_password ? "Automatic login: on" : "Log in automatically with a saved password"),
+      h("summary", {}, !a.has_password ? "Log in automatically with a saved password"
+        : a.auto_failed ? "Automatic login: paused (it failed last time)" : "Automatic login: on"),
+      a.auto_failed && a.has_password ? h("div", { class: "faint", style: { fontSize: "12px" } },
+        "The hidden window couldn't log in (often a bot check). Bookkeeper won't keep trying: log in yourself with “Log in…” or “Use my Waterfox login”. Saving the password again lets it try once more.") : null,
       h("div", { class: "body" },
         h("div", { class: "faint", style: { fontSize: "12px" } }, "Bookkeeper logs in by itself in a hidden window, and again whenever the login runs out. The password is encrypted with your Windows account and stays on this computer."),
         h("div", { class: "row2" }, login, pwd),
@@ -740,6 +1015,26 @@ function renderHelp() {
       h("div", { class: "help-card" }, h("h2", {}, "Where tags come from"),
         h("ul", {}, h("li", {}, h("b", {}, "site"), ": written on the book's page."), h("li", {}, h("b", {}, "rule"), ": implied by another tag (LitRPG → RPG elements)."),
           h("li", {}, h("b", {}, "text"), ": found in the chapters (narration, narrator, game messages)."), h("li", {}, h("b", {}, "copy"), ": from the same book on another site."), h("li", {}, h("b", {}, "you"), ": added by you."))),
+      h("div", { class: "help-card" }, h("h2", {}, "Searching by tags"),
+        h("p", {}, "Type into the Tags field in the library filters. Suggestions appear as you type, in any language; Tab puts one in, Enter searches. The buttons under the field add the operators, and resting the mouse on one explains it. The line under the field says how your search reads."),
+        h("table", { class: "syntax" }, QUERY_HELP.map(([ex, what]) => h("tr", {}, h("td", {}, h("code", {}, ex)), h("td", {}, what)))),
+        h("p", {}, "The Fandoms field works the same way, but every name in it is a fandom.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Tag pages"),
+        h("p", {}, "Rest the mouse on any tag for a short description. ", h("b", {}, "About this tag"), " (or ", h("a", { href: "#/tags" }, "All tags"), ") opens its page: its names in English, Russian and Ukrainian, aliases, ",
+          h("b", {}, "parent tags"), " (broader tags every book with it also gets), ", h("b", {}, "child tags"), " (narrower tags that can't appear without it, numbered 1, 2, 2.1…), ",
+          h("b", {}, "related tags"), " (tags that usually appear with it in your library) and ", h("b", {}, "anti-tags"), " (tags that contradict it, plus common tags that almost never appear with it).")),
+      h("div", { class: "help-card" }, h("h2", {}, "Possible tags"),
+        h("p", {}, "While reading a book's opening chapters for the narration, Bookkeeper also counts words that point to a tag: cultivation terms, system messages, dragons, school life and so on. Tags that come up often enough are added as ", h("b", {}, "possible"), " (dotted on the book page, with how strongly they showed up)."),
+        h("p", {}, "Plain tag searches ignore them; write ", h("code", {}, "?System"), " to include them, or ", h("code", {}, "−?Harem"), " to leave out even possible ones. Books checked before version 0.4 are read again slowly in the background, when nothing else is waiting.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Fanfiction, orientation and age rating"),
+        h("p", {}, "These filters work like Ficbook's. ", h("b", {}, "Orientation"), " uses the tags Het, Slash, Femslash, Gen, Mixed and Other (from Ficbook and other sites). ", h("b", {}, "Age rating"),
+          " uses the site's own rating as G / PG-13 / R / NC-17 / NC-21 (16+ counts as R, 18+ as NC-17, 21+ as NC-21); books marked 18+ without a rating count as NC-17.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Fixing site labels"),
+        h("p", {}, "Sites write tags their own way, and some labels aren't one of Bookkeeper's shared tags (Wattpad hashtags, character names, series names). ",
+          h("a", { href: "#/labels" }, "Fix site labels"), " lists them, most common first, with suggestions. Say once what a label means and every book with it follows, including books that arrive later. ",
+          h("b", {}, "Hide"), " removes junk labels; ", h("b", {}, "Undo"), " brings anything back."),
+        h("p", {}, "When Bookkeeper maps a label to the wrong tag, press ✎ next to it under “Written on the sites as” on the tag's page. Fixes are saved in the [fixes] table of ",
+          h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), ".")),
       h("div", { class: "help-card" }, h("h2", {}, "Your own tag rules"),
         h("p", {}, "Open ", h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), " in Notepad. You can map site labels to tags and add rules like “harem → romance”. Then press “Re-apply my tag rules” on the Sites page.")),
       h("div", { class: "help-card" }, h("h2", {}, "Your data"),
@@ -755,6 +1050,340 @@ function renderHelp() {
         h("p", {}, "Some sites don't let you download even what you bought, but extensions such as ExLoader can. Open a book and press ", h("b", {}, "Open in my Waterfox"), ": the book opens in your normal Waterfox, where your extensions are. Download it with the extension, and Bookkeeper picks up the file from your downloads folder and lists it under the book.")),
       h("div", { class: "help-card" }, h("h2", {}, "18+ books"),
         h("p", {}, "18+ and 21+ books are collected like any other. To keep them out of sight, tick ", h("b", {}, "Hide 18+ books"), " in the library filters (under More). Some sites only show them to logged-in readers.")))));
+}
+
+/// ---------- tag hover cards ----------
+const tagCache = new Map();
+function tagBrief(id) {
+  if (!tagCache.has(id)) tagCache.set(id, api.get(`/api/tag?id=${encodeURIComponent(id)}`).catch(() => null));
+  return tagCache.get(id);
+}
+const tagHref = (id) => `#/tag?id=${encodeURIComponent(id)}`;
+const hcard = h("div", { class: "hcard hidden", role: "tooltip" });
+document.body.append(hcard);
+let hoverTimer = null, hideTimer = null, hoverEl = null;
+hcard.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+hcard.addEventListener("mouseleave", () => hideHover());
+document.addEventListener("scroll", (e) => {
+  if (e.target === hcard) return;
+  hideHover(0);
+  if (openSuggest && !(e.target instanceof Element && e.target.classList.contains("suggest"))) openSuggest();
+}, true);
+function hideHover(delay = 200) {
+  clearTimeout(hoverTimer); clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { hcard.classList.add("hidden"); hoverEl = null; }, delay);
+}
+// A short description of the tag when the mouse rests on `el`, with a link to the tag's page.
+function withHover(el, id, extra) {
+  el.addEventListener("mouseenter", () => {
+    clearTimeout(hideTimer); clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => { hoverEl = el; showHover(el, id, extra); }, 450);
+  });
+  el.addEventListener("mouseleave", () => hideHover());
+  return el;
+}
+async function showHover(el, id, extra) {
+  const t = await tagBrief(id);
+  if (!t || hoverEl !== el || !el.isConnected) return;
+  const shown = tagLabel(t);
+  const names = [t.label, t.label_ru, t.label_uk].filter((n, i, all) => n && n !== shown && all.indexOf(n) === i);
+  fill(hcard,
+    h("div", { class: "h1" }, h("b", {}, shown), h("span", { class: "cat" }, CATS[t.category] || t.category || "")),
+    names.length ? h("div", { class: "names" }, names.join(" · ")) : null,
+    t.description ? h("div", { class: "desc" }, t.description)
+      : !t.known && t.category !== "fandom" ? h("div", { class: "desc faint" }, "A label as written on the site (not one of Bookkeeper's shared tags).") : null,
+    t.aliases && t.aliases.length ? h("div", {}, h("span", { class: "k" }, "Also called: "), t.aliases.slice(0, 6).join(", ")) : null,
+    t.parents && t.parents.length ? h("div", {}, h("span", { class: "k" }, "Always also: "), t.parents.map(tagLabel).join(", ")) : null,
+    extra ? h("div", { class: "faint" }, extra) : null,
+    h("div", { class: "faint" }, `${fmtNum(t.books || 0)} book${t.books === 1 ? "" : "s"}`, t.possible ? ` · ${fmtNum(t.possible)} more possibly` : "",
+      t.children ? ` · ${t.children} narrower tag${t.children === 1 ? "" : "s"}` : ""),
+    h("div", { class: "acts" },
+      h("a", { class: "btn small", href: tagHref(id), onclick: () => hideHover(0) }, !t.known && t.category === "other" ? "Fix this label →" : "About this tag →"),
+      h("button", { class: "btn small", title: "Show only books with this tag", onclick: () => { hideHover(0); addToQuery(t, ""); } }, "+ Add"),
+      h("button", { class: "btn small", title: "Leave out books with this tag", onclick: () => { hideHover(0); addToQuery(t, "-"); } }, "− Exclude")));
+  hcard.classList.remove("hidden");
+  const r = el.getBoundingClientRect(), w = hcard.offsetWidth, ht = hcard.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
+  const top = r.bottom + 6 + ht > innerHeight - 8 ? Math.max(8, r.top - ht - 6) : r.bottom + 6;
+  hcard.style.left = `${left}px`; hcard.style.top = `${top}px`;
+}
+
+// ---------- tag pages ----------
+const tagLink = (x) => withHover(h("a", { href: tagHref(x.id) }, tagLabel(x)), x.id);
+const countOf = (n) => h("span", { class: "n" }, fmtNum(n || 0));
+function numbered(items, render, cls = "") {
+  if (!items || !items.length) return h("p", { class: "faint" }, "—");
+  return h("ol", { class: `nlist ${cls}` }, items.map((x, i) => h("li", {}, h("span", { class: "num" }, `${i + 1})`), render(x))));
+}
+// Child tags as 1), 2), 2.1), 2.1.1)… — each one under the most specific tag it belongs to.
+function treeList(nodes, prefix = "") {
+  return h("ol", { class: "nlist" }, nodes.map((n, i) => {
+    const num = prefix ? `${prefix}.${i + 1}` : String(i + 1);
+    return h("li", {}, h("span", { class: "num" }, `${num})`), tagLink(n), countOf(n.books), n.children.length ? treeList(n.children, num) : null);
+  }));
+}
+
+async function renderTag(id) {
+  const app = $("#app");
+  app.replaceChildren(h("div", { class: "page" }, h("div", { class: "loadmore" }, h("span", { class: "spinner" }))));
+  let t;
+  try { t = await api.get(`/api/tag?id=${encodeURIComponent(id)}&full=1`); }
+  catch (e) { app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "Couldn't open this tag"), h("p", {}, String(e.message || e)))); return; }
+  if (parseHash().params.id !== id) return;
+  const name = tagLabel(t);
+  const key = t.category === "fandom" ? "fq" : "tq";
+  const show = (q) => { location.hash = "#/library?" + toQuery({ [key]: q }); };
+  const sec = (title, sub, body) => h("section", { class: "tsec" }, h("h2", {}, title, sub ? h("span", { class: "sub" }, ` — ${sub}`) : null), body);
+  app.replaceChildren(h("div", { class: "page tagpage" },
+    h("div", { class: "crumbs" }, h("a", { href: "#/tags" }, "All tags"), " › ", CATS[t.category] || t.category || ""),
+    h("h1", {}, name),
+    h("div", { class: "names" }, [["English", t.label], ["Русский", t.label_ru], ["Українська", t.label_uk]].filter(([, v]) => v).map(([k, v]) =>
+      h("span", {}, h("span", { class: "faint" }, `${k}: `), v))),
+    t.description ? h("p", { class: "lead" }, t.description)
+      : !t.known && t.category !== "fandom" ? h("p", { class: "lead" }, "A label as written on the site. It isn't one of Bookkeeper's shared tags, so it has no translations or family. Say below what it means, and every book with it follows.") : null,
+    h("div", { class: "stats" }, `${fmtNum(t.books || 0)} book${t.books === 1 ? "" : "s"} in your library`,
+      t.possible ? ` · ${fmtNum(t.possible)} more possibly (found in their opening chapters)` : ""),
+    h("div", { class: "actions" },
+      h("button", { class: "btn primary", onclick: () => show(qtok(t.id)) }, "Show books with it"),
+      h("button", { class: "btn", onclick: () => show("-" + qtok(t.id)) }, "Show books without it"),
+      t.possible ? h("button", { class: "btn", title: "Books with the tag, plus books that possibly have it", onclick: () => show("?" + qtok(t.id)) }, "Include possible ones") : null,
+      h("button", { class: "btn ghost", title: "Add it to the search you already have in the library", onclick: () => addToQuery(t, "") }, "Add to my search")),
+    t.fixable || t.fix ? h("section", { class: "tsec fixbox" }, h("h2", {}, t.fix ? "Fixed label" : "Fix this label",
+      h("span", { class: "sub" }, " — what it means, for every book with it")),
+      fixerFor({ label: t.fix ? t.fix.label : t.label, id: t.id, books: t.books, fix: t.fix }),
+      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, h("a", { href: "#/labels" }, "All labels to fix, most common first →"))) : null,
+    t.fixes_here.length ? sec("Your label fixes", `site labels you said mean “${name}”`, h("div", { class: "lrows" },
+      t.fixes_here.map((f) => labelRow({ label: f.label, books: null, fix: { tags: f.tags, hidden: false, separate: false } }))))
+      : null,
+    sec("Aliases", "other names that mean the same", numbered(t.aliases, (a) => a, "cols")),
+    sec("Parent tags", `broader tags every “${name}” book also gets`, numbered(t.parents, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
+    t.ancestors.length ? h("div", { class: "further" }, "Further up: ", t.ancestors.map((x, i) => [i ? ", " : "", tagLink(x)])) : null,
+    sec("Child tags", `narrower tags that can't appear without “${name}”`, t.children_tree.length ? treeList(t.children_tree) : h("p", { class: "faint" }, "—")),
+    sec("Related tags", `tags that usually appear with “${name}” in your library`,
+      numbered(t.related, (x) => h("span", {}, tagLink(x), h("span", { class: "n" }, `in ${x.share}% of these books`)))),
+    sec("Anti-tags", `tags that contradict “${name}”`, numbered(t.anti, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
+    t.rarely.length ? sec("Rarely together", `common tags that almost never appear with “${name}” in your library`,
+      numbered(t.rarely, (x) => h("span", {}, tagLink(x), h("span", { class: "n" }, `${fmtNum(x.together)} book${x.together === 1 ? "" : "s"} with both`)))) : null,
+    t.combined.length ? sec("Combined labels", `site labels that mean “${name}” plus another tag`, h("div", { class: "chips" }, t.combined.map((x) =>
+      h("span", { class: "chip static" }, x.label, h("span", { class: "n" }, "= " + [name, ...x.with.map(tagLabel)].join(" + ")))))) : null,
+    t.seen_as.length ? sec("Written on the sites as", "✎ when a label doesn't really mean this tag", seenAs(t)) : null,
+    t.sites.length ? sec("On the sites", null, h("div", { class: "chips" }, t.sites.map((s) =>
+      h("span", { class: "chip static" }, siteName(s.site), countOf(s.books))))) : null));
+}
+
+// The site labels behind a tag; ✎ opens a fixer for one of them (when Bookkeeper maps it to the wrong tag).
+function seenAs(t) {
+  const slot = h("div", {});
+  let open = null;
+  const chips = h("div", { class: "chips" }, t.seen_as.map((s) => h("span", { class: "chip static" }, s.raw, countOf(s.books),
+    s.fixed ? h("span", { class: "n", title: "You fixed this label" }, "✓") : null,
+    h("button", { class: "edit", title: `“${s.raw}” doesn't mean this tag? Say what it means`, onclick: () => {
+      if (open === s.raw) { open = null; slot.replaceChildren(); return; }
+      open = s.raw;
+      slot.replaceChildren(h("div", { class: "lrow" }, h("div", { class: "lhead" }, h("span", { class: "lname" }, s.raw), h("span", { class: "n" }, booksText(s.books))),
+        fixerFor({ label: s.raw, books: s.books }, { remap: true, exclude: [t.id] })));
+    } }, "✎"))));
+  return h("div", {}, chips, slot);
+}
+
+async function renderAllTags() {
+  const app = $("#app");
+  app.replaceChildren(h("div", { class: "page" }, h("div", { class: "loadmore" }, h("span", { class: "spinner" }))));
+  let all = [];
+  try { all = await api.get("/api/tags/all"); } catch { /* shown as empty */ }
+  if (parseHash().view !== "tags") return;
+  const filter = h("input", { class: "input", placeholder: "Find a tag: type part of a name in any language…", style: { maxWidth: "420px" } });
+  const body = h("div", {});
+  const draw = () => {
+    const q = filter.value.trim().toLowerCase().replace(/ё/g, "е");
+    const by = {};
+    for (const t of all) {
+      if (q && ![t.id, t.label, t.label_ru, t.label_uk].some((n) => n && n.toLowerCase().replace(/ё/g, "е").includes(q))) continue;
+      const cat = t.known || t.category === "fandom" ? t.category : "other";
+      (by[cat] = by[cat] || []).push(t);
+    }
+    const order = meta.categories || Object.keys(CATS);
+    const sections = order.filter((c) => by[c]).map((c) => h("section", { class: "tsec" },
+      h("h2", {}, CATS[c] || c, h("span", { class: "sub" }, ` — ${by[c].length}`)),
+      h("div", { class: "chips" }, by[c].sort((a, b) => (b.books || 0) - (a.books || 0) || tagLabel(a).localeCompare(tagLabel(b))).map((t) =>
+        withHover(h("a", { class: `chip ${t.books ? "" : "empty"}`, href: tagHref(t.id) }, tagLabel(t), countOf(t.books)), t.id)))));
+    body.replaceChildren(...(sections.length ? sections : [h("p", { class: "muted" }, "No tag matches that.")]));
+  };
+  filter.addEventListener("input", debounce(draw, 120));
+  app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "All tags"),
+    h("p", { class: "lead" }, "Bookkeeper's shared tags, grouped like on the book page, with the number of books in your library that have each. Rest the mouse on a tag for a short description; click it for its aliases, parent and child tags, related tags and anti-tags."),
+    h("div", { class: "callout" }, "Labels from the sites that aren't shared tags are listed under “Other tags” at the bottom. ",
+      h("a", { class: "btn small primary", href: "#/labels" }, "Fix the most common ones →")),
+    h("div", { style: { margin: "0 0 6px" } }, filter),
+    h("div", { class: "legend", style: { marginBottom: "6px" } }, h("span", {}, "Faded: no book has it yet"), h("span", {}, "Tag names in: "),
+      ...[["en", "English"], ["ru", "Русский"], ["uk", "Українська"]].map(([k, l]) => chip(l, tagLang === k, () => { tagLang = k; store.set("tagLang", k); renderAllTags(); }))),
+    body));
+  draw();
+}
+
+/// ---------- fixing site labels ----------
+// A small "type a tag" field: suggestions as you type, Enter or a click picks one.
+function tagPicker(onPick, placeholder = "Means… type a tag") {
+  const input = h("input", { class: "input small", placeholder, autocomplete: "off", spellcheck: "false" });
+  const box = h("div", { class: "suggest hidden" });
+  let opts = [], sel = -1;
+  const pick = (o) => { if (!o) return; input.value = ""; box.classList.add("hidden"); onPick(o); };
+  const draw = () => {
+    openSuggest = () => placeList(box, input);
+    placeList(box, input);
+    fill(box, opts.map((o, i) => h("div", { class: `opt ${i === sel ? "sel" : ""}`, onmousedown: (e) => { e.preventDefault(); pick(o); } },
+      h("div", { class: "l1" }, h("span", { class: "name" }, tagLabel(o)), otherName(o), h("span", { class: "n" }, fmtNum(o.books || 0))),
+      o.description ? h("div", { class: "d" }, o.description) : null)));
+    box.classList.toggle("hidden", !opts.length);
+  };
+  const suggest = debounce(async () => {
+    const q = input.value.trim();
+    if (!q) { box.classList.add("hidden"); return; }
+    try { opts = await api.get("/api/tags/complete?" + new URLSearchParams({ text: q, lang: tagLang, quoted: 1, limit: 10 })); } catch { opts = []; }
+    if (q !== input.value.trim() || document.activeElement !== input) return;
+    sel = opts.length ? 0 : -1;
+    draw();
+  }, 120);
+  input.addEventListener("input", suggest);
+  input.addEventListener("blur", () => box.classList.add("hidden"));
+  input.addEventListener("keydown", (e) => {
+    const open = !box.classList.contains("hidden") && opts.length > 0;
+    if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length; draw();
+    } else if (e.key === "Enter") { e.preventDefault(); if (open) pick(opts[Math.max(0, sel)]); }
+    else if (e.key === "Escape" && open) { e.stopPropagation(); box.classList.add("hidden"); }
+  });
+  return h("span", { class: "tagpick" }, input, box);
+}
+
+const booksText = (n) => `${fmtNum(n)} book${n === 1 ? "" : "s"}`;
+
+// What a site label means: suggestions, a tag picker, Hide (and Keep separate for a label mapped to the wrong tag).
+// Once fixed: the meaning, "+ another tag" and Undo. Every action applies to every book with the label.
+function labelFixer(item, opts = {}) {
+  const box = h("div", { class: "fixer" });
+  const note = h("span", { class: "note" });
+  let fix = item.fix || null, adding = false;
+  const send = async (body, doing) => {
+    fill(box, h("span", { class: "faint" }, h("span", { class: "spinner tiny" }), ` ${doing}…`));
+    try {
+      const r = await api.post("/api/labels/fix", { label: item.label, ...body });
+      fix = r.undone ? null : { tags: r.tags, hidden: r.hidden, separate: r.separate };
+      adding = false;
+      tagCache.clear();
+      draw(`${r.undone ? "Undone: " : ""}${booksText(r.books)} updated.`);
+      if (opts.onChange) opts.onChange(fix, r);
+    } catch (e) {
+      draw();
+      fill(note, h("span", { class: "warn" }, String(e.message || e)));
+    }
+  };
+  const setTags = (ids) => send({ tags: ids }, ids.length > 1 ? "Adding the tag" : "Fixing");
+  const draw = (done) => {
+    fill(note, done ? h("span", { class: "faint" }, done) : null);
+    const parts = [];
+    if (fix && !adding) {
+      parts.push(h("span", { class: "fixed" }, "✓ ", fix.hidden ? "Hidden from books" : fix.separate ? "Kept as a tag of its own"
+        : ["Means ", fix.tags.map((t, i) => [i ? " + " : "", tagLink(t)])]));
+      if (!fix.hidden && !fix.separate) {
+        parts.push(h("button", { class: "btn small ghost", title: "It means another tag as well", onclick: () => { adding = true; draw(); } }, "+ another tag"));
+      }
+      parts.push(h("button", { class: "btn small ghost", title: "Go back to how Bookkeeper read this label before", onclick: () => send({ undo: true }, "Undoing") }, "Undo"));
+    } else if (fix && adding) {
+      parts.push(tagPicker((o) => setTags([...fix.tags.map((t) => t.id), o.id]), "…and also: type a tag"),
+        h("button", { class: "btn small ghost", onclick: () => { adding = false; draw(); } }, "Cancel"));
+    } else {
+      const sug = item.suggestions || [];
+      if (sug.length) {
+        parts.push(h("span", { class: "sugs" }, sug.map((s) => h("button", {
+          class: "chip sug", onclick: () => setTags([s.id]),
+          title: `${s.why === "company" ? `${s.share}% of the books with this label also have this tag` : "Its name looks like this label"}. Click: the label means this tag.${s.description ? `\n${s.description}` : ""}`,
+        }, tagLabel(s), s.why === "company" ? h("span", { class: "why" }, `${s.share}%`) : null))));
+      }
+      parts.push(tagPicker((o) => setTags([o.id]), opts.remap ? "Means instead… type a tag" : "Means… type a tag"));
+      if (opts.remap) {
+        parts.push(h("button", { class: "btn small ghost", title: "Bookkeeper maps this label to the wrong tag: keep it as a tag of its own", onclick: () => send({ separate: true }, "Fixing") }, "Keep separate"));
+      }
+      parts.push(h("button", { class: "btn small ghost", title: "Not a real tag (a site name, a year, a typo…): remove it from every book. You can undo it later.", onclick: () => send({ hide: true }, "Hiding") }, "Hide"));
+    }
+    fill(box, parts, note);
+  };
+  draw();
+  return box;
+}
+
+// labelFixer with its suggestions, fetched first (tag pages).
+function fixerFor(item, opts = {}) {
+  const holder = h("div", {}, h("span", { class: "spinner tiny" }));
+  api.get("/api/labels/suggest?" + new URLSearchParams({ label: item.label, id: item.id || "" }))
+    .then((r) => holder.replaceChildren(labelFixer({ ...item, fix: item.fix || r.fix,
+      suggestions: r.suggestions.filter((s) => !(opts.exclude || []).includes(s.id)) }, opts)))
+    .catch(() => holder.replaceChildren(labelFixer(item, opts)));
+  return holder;
+}
+
+function labelRow(x, n) {
+  const row = h("div", { class: `lrow ${x.fix ? "done" : ""}` });
+  fill(row,
+    h("div", { class: "lhead" },
+      n ? h("span", { class: "num" }, `${n}.`) : null,
+      h("a", { class: "lname", href: tagHref(x.id || x.label), title: "The label's page" }, x.label),
+      x.books != null ? h("span", { class: "n" }, booksText(x.books)) : null,
+      x.sites && x.sites.length ? h("span", { class: "lsites" }, x.sites.slice(0, 4).map((s) => `${siteName(s.site)} ${fmtNum(s.books)}`).join(" · ")) : null,
+      x.spellings && x.spellings.length ? h("span", { class: "faint", title: x.spellings.join("\n") },
+        `also “${x.spellings.slice(0, 2).join("”, “")}”${x.spellings.length > 2 ? ` +${x.spellings.length - 2}` : ""}`) : null,
+      x.id ? h("a", { class: "faint", href: "/#/library?" + toQuery({ tq: qtok(x.id) }), target: "_blank", title: "The books with this label, in a new tab" }, "books ↗") : null),
+    labelFixer(x, { onChange: (fix) => row.classList.toggle("done", !!fix) }));
+  return row;
+}
+
+async function renderLabels() {
+  const { params } = parseHash();
+  const tab = params.tab === "mine" ? "mine" : "todo";
+  let site = params.site || "", q = params.q || "", offset = 0, total = 0;
+  const app = $("#app");
+  const list = h("div", { class: "lrows" });
+  const more = h("div", { class: "loadmore" });
+  const summary = h("span", { class: "muted" });
+  const remember = () => history.replaceState(null, "", "#/labels?" + toQuery({ site, q }));
+  const load = async (reset) => {
+    if (reset) { offset = 0; list.replaceChildren(); }
+    fill(more, h("span", { class: "spinner" }));
+    let r;
+    try { r = await api.get("/api/labels?" + toQuery({ site, q, offset, limit: 50 })); }
+    catch (e) { fill(more, h("span", { class: "warn" }, String(e.message || e))); return; }
+    total = r.total;
+    summary.textContent = `${fmtNum(r.total)} label${r.total === 1 ? "" : "s"}${site ? ` on ${siteName(site)}` : ""} on ${fmtNum(r.books)} books`;
+    r.labels.forEach((x, i) => list.append(labelRow(x, offset + i + 1)));
+    offset += r.labels.length;
+    fill(more, offset < total ? h("button", { class: "btn", onclick: () => load(false) }, `Show ${Math.min(50, total - offset)} more`)
+      : h("span", { class: "faint" }, total ? "That's all of them." : q ? "No label matches that." : "Nothing left to fix here."));
+  };
+  const loadMine = async () => {
+    fill(more, h("span", { class: "spinner" }));
+    let fixes = [];
+    try { fixes = await api.get("/api/labels/fixes"); } catch (e) { fill(more, h("span", { class: "warn" }, String(e.message || e))); return; }
+    summary.textContent = `${fmtNum(fixes.length)} fix${fixes.length === 1 ? "" : "es"}`;
+    list.replaceChildren(...fixes.map((f) => labelRow({ label: f.label, books: f.books, fix: { tags: f.tags, hidden: f.hidden, separate: f.separate } })));
+    fill(more, fixes.length ? h("span", { class: "faint" }, "They're kept in the [fixes] table of my_tags.toml.") : h("span", { class: "faint" }, "No fixes yet."));
+  };
+  const siteSel = h("select", { class: "input", style: { width: "auto" }, onchange: (e) => { site = e.target.value; remember(); load(true); } },
+    h("option", { value: "" }, "All sites"), Object.keys(meta.sites).map((s) => h("option", { value: s, selected: s === site }, siteName(s))));
+  const search = h("input", { class: "input", placeholder: "Find a label…", value: q, style: { maxWidth: "260px" } });
+  search.addEventListener("input", debounce(() => { q = search.value.trim(); remember(); load(true); }, 350));
+  app.replaceChildren(h("div", { class: "page labels" },
+    h("div", { class: "crumbs" }, h("a", { href: "#/tags" }, "All tags"), " › Fix site labels"),
+    h("h1", {}, "Fix site labels"),
+    h("p", { class: "lead" }, "These labels came from the sites but aren't one of Bookkeeper's shared tags, so they have no translations or family, and a search for a shared tag misses them. Say once what a label means and every book with it follows: the books you have now and the ones that arrive later. Most common first."),
+    h("div", { class: "seg ltabs" },
+      h("a", { class: tab === "todo" ? "on" : "", href: "#/labels" }, "To fix"),
+      h("a", { class: tab === "mine" ? "on" : "", href: "#/labels?tab=mine" }, "My fixes")),
+    tab === "todo" ? h("div", { class: "lfilters" }, siteSel, search, summary) : h("div", { class: "lfilters" }, summary),
+    h("div", { class: "legend" }, tab === "todo"
+      ? [h("span", {}, "Click a suggestion, or type a tag. Hide removes junk labels (site names, years…) from every book."), h("span", {}, "Everything can be undone.")]
+      : [h("span", {}, "Undo puts a label back the way Bookkeeper read it before.")]),
+    list, more));
+  if (tab === "todo") await load(true); else await loadMine();
 }
 
 // ---------- start ----------

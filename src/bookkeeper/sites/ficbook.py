@@ -41,6 +41,11 @@ def _badges(block: str) -> dict:
             "likes": int(re.sub(r"\D", "", likes.group(1))) if likes and re.sub(r"\D", "", likes.group(1)) else None}
 
 
+def _fandom(name: str) -> str:
+    """Fandoms go into the library's Fandoms category; «Ориджиналы» (original works) isn't a fandom."""
+    return name if name.strip().lower().startswith("ориджинал") else f"fandom:{name}"
+
+
 def _size(text: str) -> tuple[int | None, int | None]:
     words = re.search(r"([\d\s ]+)\s*слов", text)
     parts = re.search(r"(\d+)\s*част", text)
@@ -59,7 +64,9 @@ class Ficbook(Site):
     lists_adult = True
     extension_downloads = ("ExLoader",)
     login_url = f"{BASE}/login"
-    login_benefit = "Works rated NC-21, and the lists the site shows only to logged-in readers."
+    login_benefit = ("Works rated NC-21, and the lists the site shows only to logged-in readers. Ficbook's login page "
+                     "keeps showing Cloudflare checks to Bookkeeper's window: log in in your own Waterfox, then press "
+                     "“Use my Waterfox login”.")
     login_form = {"user": "#login-login, input[name=login]", "password": "input[type=password]"}
     logged_in_js = r"/isLoggedIn:\s*true/.test(document.documentElement.innerHTML)"
     extra_settings = {
@@ -88,7 +95,7 @@ class Ficbook(Site):
         tags = [_text(t) for t in _TAG.findall(block)]
         cover = re.search(r'<img src="([^"]+)"[^>]*alt=', block)
         desc = re.search(r'class="[^"]*fanfic-description[^"]*"[^>]*>(.*?)</div>', block, re.S)
-        labels = [x for x in [b["direction"], *RATING_LABELS.get(b["rating"] or "", []), *fandoms, *tags] if x]
+        labels = [x for x in [b["direction"], *RATING_LABELS.get(b["rating"] or "", []), *map(_fandom, fandoms), *tags] if x]
         title = _text(link.group(2)) or fid
         if not b["likes"] and SPAM.search(f"{title} {_text(desc.group(1)) if desc else ''} {' '.join(authors)}"):
             return None
@@ -97,7 +104,7 @@ class Ficbook(Site):
             description=html_to_text(desc.group(1)) or None if desc else None,
             cover=_html.unescape(cover.group(1)) if cover else None, lang="ru", status=b["status"],
             is_translation=False, chapters=parts, words=words, likes=b["likes"], pop_raw=b["likes"],
-            adult=b["rating"] in ("NC-17", "NC-21"), access="free",
+            adult=b["rating"] in ("NC-17", "NC-21"), age_rating=b["rating"], access="free",
             updated_at=f"{updated.group(3)}-{updated.group(2)}-{updated.group(1)}" if updated else None,
             tags=labels, partial_tags=True, extra={"rating": b["rating"], "fandoms": fandoms},
         )
@@ -165,14 +172,14 @@ class Ficbook(Site):
             size_text = m.group(1) if m else ""
         words, parts = _size(size_text)
         desc = re.search(r'itemprop="description">(.*?)</div>', head, re.S)
-        labels = [x for x in [b["direction"], *RATING_LABELS.get(b["rating"] or "", []), *fandoms, *tags] if x]
+        labels = [x for x in [b["direction"], *RATING_LABELS.get(b["rating"] or "", []), *map(_fandom, fandoms), *tags] if x]
         chapters = self._parts(s, book["sid"])
         return BookInfo(
             sid=book["sid"], url=f"{BASE}/readfic/{book['sid']}", title=_text(h1.group(1)), authors=authors,
             description=html_to_text(desc.group(1)) or None if desc else None, lang="ru", status=b["status"],
             is_translation=bool(re.search(r"<dt>\s*Оригинал", head)),  # translations name their original
             chapters=len(chapters) or parts, words=words, likes=b["likes"], pop_raw=b["likes"],
-            adult=b["rating"] in ("NC-17", "NC-21"), access="free", tags=list(dict.fromkeys(labels)),
+            adult=b["rating"] in ("NC-17", "NC-21"), age_rating=b["rating"], access="free", tags=list(dict.fromkeys(labels)),
             extra={"rating": b["rating"], "fandoms": fandoms, "toc": [[c.id, c.title] for c in chapters[:8]]},
         )
 

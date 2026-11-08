@@ -7,6 +7,8 @@ shared tag. Labels we don't know stay as their own tag, so nothing is lost.
 Rules then add implied tags: a LitRPG book also gets "RPG / game elements", a romantic fantasy gets both
 "Romance" and "Fantasy", and so on. You can add your own synonyms and rules in data/my_tags.toml.
 """
+import json
+import os
 import re
 import tomllib
 from functools import lru_cache
@@ -361,22 +363,35 @@ RULES: dict[str, list[str]] = {
     "academy": ["school-life"],
 }
 
-CATEGORY_ORDER = ["narration", "genre", "theme", "protagonist", "setting", "relationship", "content",
-                  "format", "origin", "demographic", "fanfic", "other"]
+CATEGORY_ORDER = ["narration", "genre", "theme", "protagonist", "setting", "orientation", "relationship",
+                  "content", "format", "origin", "demographic", "fandom", "fanfic", "other"]
 
-# The rest of the list (tropes, settings, content notes, fandoms, Ukrainian names) lives in tagdata.py.
+# The rest of the list (tropes, settings, content notes, fandoms, Ukrainian names) lives in tagdata.py;
+# descriptions, contradictions and extra family links in tagdocs.py.
 from .tagdata import MORE_COMPOUND, MORE_RULES, MORE_SYNONYMS, MORE_TAGS, UK  # noqa: E402
+from . import tagdocs  # noqa: E402
+from .tagdocs import ANTI, CATEGORY_OVERRIDES, DESCRIPTIONS, MORE_FAMILY  # noqa: E402
+
+ORIENTATION = tagdocs.ORIENTATION  # the Orientation filter's tags, for the web app
 
 TAGS.update(MORE_TAGS)
 for _tid, _extra in MORE_SYNONYMS.items():
     _en, _ru, _cat, _syn = TAGS[_tid]
     TAGS[_tid] = (_en, _ru, _cat, [*_syn, *_extra])
+for _tid, _cat in CATEGORY_OVERRIDES.items():
+    _en, _ru, _old, _syn = TAGS[_tid]
+    TAGS[_tid] = (_en, _ru, _cat, _syn)
 COMPOUND.update(MORE_COMPOUND)
-for _tid, _extra in MORE_RULES.items():
-    RULES[_tid] = [*RULES.get(_tid, []), *_extra]
+for _source in (MORE_RULES, MORE_FAMILY):
+    for _tid, _extra in _source.items():
+        RULES[_tid] = list(dict.fromkeys([*RULES.get(_tid, []), *_extra]))
 
 # Bump when the built-in list changes: every book's site labels are then mapped again on the next start.
-TAGS_VERSION = 3
+TAGS_VERSION = 4
+
+# Sites name fandoms freely ("Ведьмак", "The Witcher"). Connectors pass them as "fandom:<name>": a fandom we know
+# becomes its shared tag, any other becomes a tag of its own in the Fandoms category.
+FANDOM_PREFIX = "fandom:"
 
 _KEY_RE = re.compile(r"[^0-9a-zа-яіїєґ+]+")
 
@@ -417,6 +432,8 @@ def _tables():
         syn[key(label)] = list(ids)
     for label, ids in (user.get("synonyms") or {}).items():
         syn[key(label)] = [ids] if isinstance(ids, str) else list(ids)
+    for label, ids in (user.get("fixes") or {}).items():  # made on the Fix labels page; they win
+        syn[key(label)] = [ids] if isinstance(ids, str) else list(ids)
     rules = {k: list(v) for k, v in RULES.items()}
     for k, v in (user.get("rules") or {}).items():
         rules.setdefault(k, [])
@@ -426,10 +443,16 @@ def _tables():
 
 def reload() -> None:
     _tables.cache_clear()
+    _children_index.cache_clear()
+    _alias_index.cache_clear()
 
 
 def canonical(label: str) -> list[str]:
     """Shared tag ids for a label as written on a site. Unknown labels become their own tag."""
+    if label.lower().startswith(FANDOM_PREFIX):
+        name = label[len(FANDOM_PREFIX):].strip()
+        known = [t for t in canonical(name) if is_known(t) and info(t)["category"] == "fandom"] if name else []
+        return known or ([FANDOM_PREFIX + name.lower().replace("ё", "е")] if name else [])
     k = key(label)
     if not k:
         return []
@@ -447,12 +470,11 @@ def canonical(label: str) -> list[str]:
 
 def implied(tag_ids: set[str]) -> set[str]:
     """Tags added by the rules (not including the ones you passed in)."""
-    _, rules, _ = _tables()
     out: set[str] = set()
     todo = list(tag_ids)
     while todo:
         t = todo.pop()
-        for extra in rules.get(t, ()):
+        for extra in parents(t):
             if extra not in tag_ids and extra not in out:
                 out.add(extra)
                 todo.append(extra)
@@ -461,7 +483,150 @@ def implied(tag_ids: set[str]) -> set[str]:
 
 def info(tag_id: str) -> dict:
     _, _, tag_info = _tables()
-    return tag_info.get(tag_id) or {"label": tag_id, "label_ru": None, "label_uk": None, "category": "other"}
+    if tag_id in tag_info:
+        return tag_info[tag_id]
+    if tag_id.startswith(FANDOM_PREFIX):
+        return {"label": tag_id[len(FANDOM_PREFIX):], "label_ru": None, "label_uk": None, "category": "fandom"}
+    return {"label": tag_id, "label_ru": None, "label_uk": None, "category": "other"}
+
+
+# ---------------------------------------------------------------- the family tree
+def parents(tag_id: str) -> list[str]:
+    """Tags this one implies (its parents): every LitRPG book is also "RPG elements"."""
+    _, rules, _ = _tables()
+    out = list(rules.get(tag_id, ()))
+    if tag_id.startswith(FANDOM_PREFIX) and "fanfiction" not in out:
+        out.append("fanfiction")
+    return out
+
+
+@lru_cache(maxsize=1)
+def _children_index() -> dict[str, list[str]]:
+    _, rules, _ = _tables()
+    index: dict[str, list[str]] = {}
+    for child, ps in rules.items():
+        for p in ps:
+            index.setdefault(p, []).append(child)
+    return index
+
+
+def children(tag_id: str) -> list[str]:
+    """Tags that imply this one (can't appear without it)."""
+    return list(_children_index().get(tag_id, []))
+
+
+def ancestors(tag_id: str) -> list[str]:
+    seen, todo = [], list(parents(tag_id))
+    while todo:
+        t = todo.pop(0)
+        if t not in seen and t != tag_id:
+            seen.append(t)
+            todo += parents(t)
+    return seen
+
+
+def descendants(tag_id: str) -> set[str]:
+    seen, todo = set(), list(children(tag_id))
+    while todo:
+        t = todo.pop()
+        if t not in seen and t != tag_id:
+            seen.add(t)
+            todo += children(t)
+    return seen
+
+
+def direct_parents(tag_id: str) -> list[str]:
+    """Parents, without those already implied by another parent (Xianxia → Cultivation, not also → Fantasy)."""
+    ps = parents(tag_id)
+    return [p for p in ps if not any(p in ancestors(q) for q in ps if q != p)]
+
+
+def child_tree(tag_id: str, _path: tuple = ()) -> list[dict]:
+    """Children as a tree: each child appears under the most specific tag it belongs to."""
+    kids = children(tag_id)
+    kids = [c for c in kids if not any(c in descendants(o) for o in kids if o != c)]
+    out = []
+    for c in sorted(kids, key=lambda t: info(t)["label"].lower()):
+        if c in _path:
+            continue
+        out.append({"id": c, "children": child_tree(c, _path + (tag_id,))})
+    return out
+
+
+def anti(tag_id: str) -> list[str]:
+    """Tags that contradict this one."""
+    out = list(ANTI.get(tag_id, []))
+    out += [t for t, others in ANTI.items() if tag_id in others and t not in out]
+    return out
+
+
+def describe(tag_id: str) -> str | None:
+    return DESCRIPTIONS.get(tag_id)
+
+
+@lru_cache(maxsize=1)
+def _alias_index() -> tuple[dict[str, list[str]], dict[str, list[tuple[str, list[str]]]]]:
+    """(tag id -> every way it's written: names in three languages and synonyms,
+        tag id -> site labels that mean it together with other tags: "магический детектив" = Fantasy + Mystery)."""
+    names: dict[str, list[str]] = {}
+    combos: dict[str, list[tuple[str, list[str]]]] = {}
+    for tid, (en, ru, _cat, synonyms) in TAGS.items():
+        names[tid] = [a for a in dict.fromkeys([en, ru, UK.get(tid) or "", *synonyms]) if a]
+    for label, ids in COMPOUND.items():
+        if len(ids) == 1:
+            if ids[0] in names and label not in names[ids[0]]:
+                names[ids[0]].append(label)
+            continue
+        for t in ids:
+            combos.setdefault(t, []).append((label, [x for x in ids if x != t]))
+    return names, combos
+
+
+def aliases(tag_id: str) -> list[str]:
+    """Other names for the tag (not its own names in the three languages)."""
+    i = info(tag_id)
+    own = {key(x) for x in (i.get("label"), i.get("label_ru"), i.get("label_uk")) if x}
+    out, seen = [], set(own)
+    for a in _alias_index()[0].get(tag_id, []):
+        if key(a) not in seen:  # one spelling per name: "LitRPG", "litrpg" and "Lit-RPG" are the same
+            seen.add(key(a))
+            out.append(a)
+    return out
+
+
+def combined(tag_id: str) -> list[tuple[str, list[str]]]:
+    """Site labels that mean this tag together with others: [(label, the other tag ids)]."""
+    return _alias_index()[1].get(tag_id, [])
+
+
+def suggest(text: str, category: str | None = None, limit: int = 15) -> list[tuple[str, str, int]]:
+    """Known tags matching `text`: [(tag id, the name or alias that matched, rank)]. Rank 0: one of the tag's own
+    names starts with it; 1: a synonym starts with it; 2 and 3: they contain it."""
+    k = key(text)
+    if not k:
+        return []
+    found = []
+    for tid, (en, ru, cat, synonyms) in TAGS.items():
+        if category and info(tid)["category"] != category:
+            continue
+        best = None
+        for rank_start, rank_contains, names in ((0, 2, [en, ru, UK.get(tid) or ""]), (1, 3, synonyms)):
+            for name in names:
+                nk = key(name)
+                if not nk:
+                    continue
+                if nk.startswith(k):
+                    cand = (rank_start, name)
+                elif k in nk:
+                    cand = (rank_contains, name)
+                else:
+                    continue
+                if best is None or cand[0] < best[0]:
+                    best = cand
+        if best:
+            found.append((tid, best[1], best[0]))
+    found.sort(key=lambda x: x[2])
+    return found[:limit]
 
 
 def collisions() -> list[tuple[str, str, str]]:
@@ -479,6 +644,11 @@ def collisions() -> list[tuple[str, str, str]]:
 
 def is_known(tag_id: str) -> bool:
     return tag_id in _tables()[2]
+
+
+def all_ids() -> list[str]:
+    """Every shared tag id."""
+    return list(_tables()[2])
 
 
 POV_TAGS = {"pov-first": "first", "pov-third": "third", "pov-second": "second"}
@@ -502,6 +672,65 @@ USER_FILE_TEMPLATE = """\
 # label_ru = "Мой любимый троп"
 # category = "theme"
 """
+
+
+def names() -> dict[str, list[str]]:
+    """Every name, alias and site label Bookkeeper recognizes (reduced with key()) and the tags it means."""
+    return _tables()[0]
+
+
+def own_id(label: str) -> str:
+    """The tag a site label becomes when it isn't one of the shared tags."""
+    return label.strip().lower().replace("ё", "е")
+
+
+def fixes() -> dict[str, list[str]]:
+    """Label fixes from my_tags.toml's [fixes] table: {label as written: tag ids} ([] hides the label)."""
+    return {k: ([v] if isinstance(v, str) else list(v)) for k, v in (_user_config().get("fixes") or {}).items()}
+
+
+FIXES_HEADER = (
+    "# Labels you fixed on Bookkeeper's \"Fix labels\" page: the label on the left means the tags on the right,\n"
+    "# for every book. [] hides the label. Bookkeeper rewrites this table when you fix a label there; you can\n"
+    "# also edit it here (then press \"Re-apply my tag rules\" on the Sites page).\n")
+
+
+def _toml_str(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False)  # a JSON string is a valid TOML string
+
+
+def set_fix(label: str, ids: list[str] | None) -> None:
+    """Save what a site label means (None removes the fix) in my_tags.toml's [fixes] table. The rest of the file,
+    your comments included, stays as it is. Call reload() afterwards."""
+    path = config.USER_TAGS_FILE
+    text = path.read_text(encoding="utf-8") if path.exists() else USER_FILE_TEMPLATE
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"my_tags.toml has a mistake ({e}). Fix it in Notepad first.") from e
+    current = {k: ([v] if isinstance(v, str) else list(v)) for k, v in (data.get("fixes") or {}).items()}
+    wanted = {name: v for name, v in current.items() if key(name) != key(label)}
+    if ids is not None:
+        wanted[label.strip()] = list(dict.fromkeys(ids))
+    body = "".join(f"{_toml_str(name)} = [{', '.join(_toml_str(t) for t in v)}]\n"
+                   for name, v in sorted(wanted.items(), key=lambda kv: key(kv[0])))
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if line.split("#")[0].strip() == "[fixes]"), None)
+    if start is None:
+        new = text + ("" if not text or text.endswith("\n") else "\n") + "\n" + FIXES_HEADER + "[fixes]\n" + body
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+        tail = end
+        while end < len(lines) and tail > start + 1 and lines[tail - 1].lstrip().startswith("#"):
+            tail -= 1  # comments right above the next table belong to it
+        new = "".join(lines[:start + 1]) + body + ("\n" if end < len(lines) else "") + "".join(lines[tail:])
+    check = tomllib.loads(new)  # never write a file Bookkeeper couldn't read back
+    if {key(k) for k in check.get("fixes") or {}} != {key(k) for k in wanted}:
+        raise ValueError("my_tags.toml couldn't be updated safely; edit its [fixes] table in Notepad")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def ensure_user_file() -> None:

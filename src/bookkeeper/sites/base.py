@@ -28,6 +28,7 @@ class BookInfo:
     likes: int | None = None
     pop_raw: float | None = None              # whatever this site counts popularity by
     adult: bool = False
+    age_rating: str | None = None             # G / PG-13 / R / NC-17 / NC-21, when the site gives one
     access: str | None = None                 # free / partial / paid
     created_at: str | None = None
     updated_at: str | None = None
@@ -73,6 +74,8 @@ class Site:
     note = ""                                 # shown on the Sites page
     native_formats: tuple[str, ...] = ()      # formats the site can give us directly (fb2, epub...)
     lists_adult = False                       # the catalog marks 18+ books, so they used to be skipped there
+    # Read the catalog once more from the start in 0.4, for the age ratings it lists (older versions didn't keep them).
+    age_rescan = False
     has_text = True                           # False: catalog only (no narration check, no downloads)
     # Browser extensions (in your own Waterfox) that can download this site's books, e.g. ExLoader.
     extension_downloads: tuple[str, ...] = ()
@@ -81,6 +84,7 @@ class Site:
     login_url = ""
     login_benefit = ""                        # what logging in gives you, shown on the Sites page
     login_autofill = True                     # Bookkeeper can fill in a saved login and password
+    login_import = True                       # the login lives in cookies, so it can be copied from your Waterfox
     login_form: dict = {}                     # optional CSS selectors: user, password, submit
     # JavaScript that is true on a page once you're logged in.
     logged_in_js = ("!/(log-?in|sign-?in|auth|вход)/i.test(location.pathname) && "

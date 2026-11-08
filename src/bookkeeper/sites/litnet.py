@@ -66,6 +66,7 @@ class Litnet(Site):
             words=int(it["total_chr_length"] / 7.2) if it.get("total_chr_length") else None,
             views=stats.get("count_views"), likes=stats.get("count_likes"), pop_raw=stats.get("rating"),
             adult=bool(flags.get("is_adult_only") or it.get("adult_label") == 18),
+            age_rating=f"{it['adult_label']}+" if it.get("adult_label") else None,
             access="partial" if price else "free", created_at=it.get("published_at"),
             updated_at=it.get("updated_at"), tags=[x for x in labels if x],
             extra={"alias": it["alias"], "series": cycle.get("title"), "price": price}, complete=True,

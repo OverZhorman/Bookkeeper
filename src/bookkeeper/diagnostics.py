@@ -10,7 +10,6 @@ pass the check yourself, and saves the page once it has loaded."""
 import json
 import re
 import threading
-import time
 import zipfile
 from datetime import datetime
 from urllib.parse import urljoin

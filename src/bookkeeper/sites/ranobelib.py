@@ -50,11 +50,13 @@ class RanobeLib(Site):
     min_interval = 1.0
     note = "Reads the site's own data feed. The site shows some 18+ titles only to logged-in readers."
     lists_adult = True
+    age_rescan = True
     # The site logs you in through a pop-up from its own login service, so Bookkeeper can't fill in a password
     # for you: press "Log in…" and log in in the window that opens.
     login_url = "https://ranobelib.me/ru"
     login_benefit = "18+ titles that the site shows only to logged-in readers. In the window, press «Войти»."
     login_autofill = False
+    login_import = False  # the login is kept in the browser's storage, not in cookies
     _AUTH = "(() => { try { return JSON.parse(localStorage.getItem('auth') || '{}') } catch (e) { return {} } })()"
     logged_in_js = f"!!(({_AUTH}).token || {{}}).access_token"
     token_js = f"(({_AUTH}).token || {{}}).access_token || null"
@@ -113,7 +115,7 @@ class RanobeLib(Site):
             rating=float(rating["average"]) if rating.get("average") else None,
             votes=votes,
             pop_raw=votes,
-            adult=age.startswith("18"),
+            adult=age.startswith("18"), age_rating=age or None,
             created_at=(b.get("releaseDateString") or "").replace(" г.", "") or None,
             extra={"type": type_label},
         )

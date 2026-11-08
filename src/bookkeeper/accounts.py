@@ -82,14 +82,16 @@ def status(site_cls) -> dict:
     return {
         "supported": bool(site_cls.login_url),
         "why": site_cls.login_benefit,
-        "logged_in": bool(sess.get("cookies") or sess.get("token")),
+        # Sites that log in with a token (RanobeLib) are logged in only when the token is there.
+        "logged_in": bool(sess.get("token")) if site_cls.token_js else bool(sess.get("cookies")),
         "user": sess.get("user"), "since": sess.get("at"), "how": sess.get("how"),
         "saved_login": creds.get("login"), "has_password": bool(creds.get("password")),
         "auto": bool(creds.get("password")) and st.get("auto", True),
         "auto_pref": st.get("auto", True),
         "can_save_password": secret.available(),
         "state": st.get("state"), "message": st.get("message"), "checked_at": st.get("checked_at"),
-        "user_waterfox": bool(user_profile_dir()),
+        "user_waterfox": bool(user_profile_dir()) and site_cls.login_import,
+        "auto_failed": bool(st.get("auto_failed")),
     }
 
 
@@ -98,12 +100,23 @@ def domains_match(cookie_domain: str, site_domains: tuple[str, ...]) -> bool:
     return any(d == s or d.endswith("." + s) for s in site_domains)
 
 
+# Cloudflare's own cookies ("you passed the check") belong to the browser that passed the check; Bookkeeper keeps
+# only the site's login cookies, so it never presents a check it didn't pass itself.
+_CLOUDFLARE = ("cf_clearance", "__cf_bm", "__cflb", "_cfuvid", "__cfruid", "__cfwaitingroom", "cf_chl_", "__cf")
+
+
+def _site_cookie(name: str) -> bool:
+    return not any(name == c or name.startswith(c) for c in _CLOUDFLARE)
+
+
 def apply(site, http) -> bool:
     """Use the saved session for this site's requests. Returns True if there was one."""
     sess = session(site.id)
     if not sess:
         return False
     for c in sess.get("cookies") or []:
+        if not _site_cookie(c.get("name", "")):
+            continue  # sessions saved by older versions may still hold Cloudflare's cookies
         http.client.cookies.set(c["name"], c.get("value", ""), domain=c.get("domain", "").lstrip(".") or None,
                                 path=c.get("path") or "/")
     if sess.get("user_agent"):
@@ -171,7 +184,8 @@ def _logged_in(browser, site_cls) -> bool:
 
 
 def _collect(browser, site_cls, how: str) -> dict:
-    cookies = [c for c in browser.cookies() if domains_match(c.get("domain", ""), site_cls.cookie_domains())]
+    cookies = [c for c in browser.cookies() if domains_match(c.get("domain", ""), site_cls.cookie_domains())
+               and _site_cookie(c.get("name", ""))]
     data = {"cookies": cookies, "user_agent": browser.user_agent(), "at": now(), "how": how}
     if site_cls.token_js:
         try:
@@ -245,7 +259,7 @@ def import_from_user_waterfox(site_cls) -> dict:
     now_s = time.time()
     cookies = []
     for name, value, host, path, secure, http_only, expiry in rows:
-        if not domains_match(host or "", domains):
+        if not domains_match(host or "", domains) or not _site_cookie(name or ""):
             continue
         exp = int(expiry) / 1000 if expiry and int(expiry) > 10 ** 11 else expiry  # some versions store milliseconds
         if exp and exp < now_s:

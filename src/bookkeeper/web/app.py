@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, accounts, browser, config, db, diagnostics, export, handoff, library, search
+from .. import __version__, accounts, browser, config, db, diagnostics, export, handoff, labels, library, search
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -108,13 +108,51 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
         return {"queued": len(ids)}
 
     @app.get("/api/tags")
-    def tag_list(q: str = "", limit: int = 20):
-        return search.tag_suggestions(q, min(limit, 100))
+    def tag_list(q: str = "", limit: int = 20, cat: str = ""):
+        return search.tag_suggestions(q, max(1, min(limit, 100)), cat or None)
 
-    @app.get("/api/tags/{tag_id}")
-    def tag_one(tag_id: str):
-        row = db.conn().execute("SELECT * FROM tags WHERE id=?", (tag_id,)).fetchone()
-        return dict(row) if row else {"id": tag_id, **T.info(tag_id), "books": 0}
+    @app.get("/api/tags/complete")
+    def tag_complete(text: str = "", lang: str = "en", fandom: int = 0, quoted: int = 0, limit: int = 12):
+        return search.complete(text[-300:], lang, bool(fandom), bool(quoted), max(1, min(limit, 40)))
+
+    @app.get("/api/tags/all")
+    def tag_index():
+        return search.all_tags()
+
+    @app.get("/api/tagquery")
+    def tag_query(q: str = "", lang: str = "en", fandom: int = 0):
+        return search.explain_query(q[:2000], lang, bool(fandom))
+
+    # ---------- fixing site labels (see labels.py) ----------
+    @app.get("/api/labels")
+    def label_list(site: str = "", q: str = "", offset: int = 0, limit: int = labels.PAGE):
+        return labels.unrecognized(site or None, q[:200], max(0, offset), max(1, min(limit, 200)))
+
+    @app.get("/api/labels/fixes")
+    def label_fixes():
+        return labels.my_fixes()
+
+    @app.get("/api/labels/suggest")
+    def label_suggest(label: str = "", id: str = ""):
+        return {"suggestions": labels.suggestions(label, id or None) if label.strip() else [],
+                "fix": labels.current_fix(label) if label.strip() else None}
+
+    @app.post("/api/labels/fix")
+    def label_fix(body: dict = Body(...)):
+        tags = None if body.get("undo") else [] if body.get("hide") else [str(t) for t in body.get("tags") or []]
+        if tags == [] and not body.get("hide") and not body.get("separate"):
+            raise HTTPException(400, "Pick a tag, or hide the label.")
+        try:
+            return labels.fix(str(body.get("label") or ""), tags, separate=bool(body.get("separate")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    # Tag ids can hold any character (fandom:…, site labels), so they go in the query string, not the path.
+    @app.get("/api/tag")
+    def tag_one(id: str = "", full: int = 0):
+        if not id:
+            raise HTTPException(404)
+        return search.tag_page(id) if full else search.tag_brief(id)
 
     # ---------- sites ----------
     @app.get("/api/sites")
@@ -155,6 +193,9 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
         action = body.get("action")
         if action not in ("login", "auto-login", "import", "logout", "check"):
             raise HTTPException(400, "unknown action")
+        if action == "import" and not cls.login_import:
+            raise HTTPException(400, f"{cls.name} keeps its login outside cookies, so it can't be copied; "
+                                     "use “Log in…” instead")
         manager.account_action(site_id, action)
         return accounts.status(cls)
 
@@ -175,6 +216,7 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
                 accounts.save_credentials(site_id, login, str(body.get("password") or "") or None)
             except RuntimeError as e:
                 raise HTTPException(400, str(e))
+            accounts.set_state(site_id, auto_failed=False)  # a new password: automatic login may try again
             if body.get("login_now", True) and cls.login_autofill:
                 manager.account_action(site_id, "auto-login")
         return accounts.status(cls)
@@ -316,6 +358,7 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
             "user_tags_file": str(config.USER_TAGS_FILE), "totals": totals,
             "sites": {sid: {"name": cls.name, "home": cls.home} for sid, cls in SITES.items()},
             "categories": T.CATEGORY_ORDER,
+            "orientations": [{"id": t, **T.info(t), "description": T.describe(t)} for t in T.ORIENTATION],
             "matching": manager.matching_now,
             "hide_adult": bool(db.get_setting("hide_adult", False)),
             "browser": browser.engine_label(),

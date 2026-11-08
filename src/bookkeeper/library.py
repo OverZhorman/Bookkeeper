@@ -30,7 +30,7 @@ def upsert_book(site: str, info: BookInfo, details: bool = False) -> int:
         "origin": info.origin, "chapters": info.chapters, "words": info.words, "rating": info.rating,
         "votes": info.votes, "views": info.views, "likes": info.likes, "pop_raw": info.pop_raw,
         "adult": int(bool(info.adult)), "access": info.access, "created_at": info.created_at,
-        "updated_at": info.updated_at,
+        "updated_at": info.updated_at, "age_rating": normalize_age(info.age_rating),
     }
     with db.transaction() as c:
         row = c.execute("SELECT id, extra, meta_at FROM books WHERE site=? AND sid=?", (site, info.sid)).fetchone()
@@ -56,14 +56,27 @@ def upsert_book(site: str, info: BookInfo, details: bool = False) -> int:
                             list(vals.values()))
             book_id = cur.lastrowid
         if replace_tags:
-            pairs = [(t, raw) for raw in info.tags if raw and raw.strip() for t in T.canonical(raw)]
-            _replace_tags(c, book_id, "site", pairs)
+            _set_site_labels(c, book_id, info.tags)
         _refresh_rules(c, book_id)
+        _drop_confirmed_maybes(c, book_id)
         _recompute_pov(c, book_id)
         b = c.execute("SELECT title, alt_titles, authors, is_translation FROM books WHERE id=?", (book_id,)).fetchone()
         matching.update_keys(c, book_id, site, b["title"], jload(b["alt_titles"], []), jload(b["authors"], []),
                              bool(b["is_translation"]))
     return book_id
+
+
+AGE_RATINGS = ("G", "PG-13", "R", "NC-17", "NC-21")
+_AGE_ALIASES = {"0+": "G", "6+": "G", "G": "G", "PG": "PG-13", "12+": "PG-13", "13+": "PG-13", "PG-13": "PG-13",
+                "16+": "R", "R": "R", "R-15": "R", "17+": "NC-17", "18+": "NC-17", "R18": "NC-17", "R-18": "NC-17",
+                "NC-17": "NC-17", "21+": "NC-21", "NC-21": "NC-21"}
+
+
+def normalize_age(value) -> str | None:
+    """A site's age label ("16+", "NC-17", "R18"…) as one of G / PG-13 / R / NC-17 / NC-21."""
+    if value in (None, ""):
+        return None
+    return _AGE_ALIASES.get(str(value).strip().upper().replace(" ", ""))
 
 
 def _ensure_tag(c, tag: str, raw: str | None):
@@ -72,6 +85,8 @@ def _ensure_tag(c, tag: str, raw: str | None):
     known = T.is_known(tag)
     i = T.info(tag)
     label = i["label"] if known else (raw or tag).strip()
+    if tag.startswith(T.FANDOM_PREFIX) and label.lower().startswith(T.FANDOM_PREFIX):
+        label = label[len(T.FANDOM_PREFIX):].strip()
     c.execute("INSERT OR IGNORE INTO tags(id, label, label_ru, label_uk, category, known) VALUES(?,?,?,?,?,?)",
               (tag, label, i.get("label_ru"), i.get("label_uk"), i.get("category") or "other", int(known)))
     _existing_tags.add(tag)
@@ -89,9 +104,90 @@ def _replace_tags(c, book_id: int, source: str, pairs):
                   (book_id, tag, source, raw))
 
 
+def _site_labels(c, book_id: int) -> list[str]:
+    """The labels the site gave a book, exactly as written (also ones you hid, which map to no tag)."""
+    row = c.execute("SELECT labels FROM books WHERE id=?", (book_id,)).fetchone()
+    labels = jload(row[0]) if row else None
+    if labels is None:  # saved before 0.4.1 and not filled in yet
+        labels = [r[0] for r in c.execute("SELECT DISTINCT raw FROM book_tags WHERE book_id=? AND source='site' "
+                                          "AND raw IS NOT NULL", (book_id,))]
+    return labels
+
+
+def _set_site_labels(c, book_id: int, raws) -> None:
+    """Keep a book's site labels as written and map them onto tags. Keeping them means a label fix can always be
+    undone, even for a label that was hidden or that shares a tag with another label of the book."""
+    raws = list(dict.fromkeys(r.strip() for r in raws or [] if r and r.strip()))
+    c.execute("UPDATE books SET labels=? WHERE id=?", (jdump(raws), book_id))
+    _replace_tags(c, book_id, "site", [(t, raw) for raw in raws for t in T.canonical(raw)])
+
+
+def retag_books(book_ids) -> set[str]:
+    """Map these books' site labels again (after a label fix), with their copies on other sites, and update the tag
+    counts. Returns the tags that changed."""
+    ids, touched = sorted(set(book_ids)), set()
+
+    def tags_of(c, chunk):
+        q = ",".join("?" * len(chunk))
+        return {r[0] for r in c.execute(f"SELECT DISTINCT tag FROM book_tags WHERE book_id IN ({q})", chunk)}
+    for i in range(0, len(ids), 200):  # small transactions, so the collectors aren't kept waiting
+        chunk = ids[i:i + 200]
+        with db.transaction() as c:
+            touched |= tags_of(c, chunk)
+            for book_id in chunk:
+                _set_site_labels(c, book_id, _site_labels(c, book_id))
+                _refresh_rules(c, book_id)
+                _drop_confirmed_maybes(c, book_id)
+                _recompute_pov(c, book_id)
+            touched |= tags_of(c, chunk)
+    works = set()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        works |= {r[0] for r in db.conn().execute(
+            f"SELECT DISTINCT work_id FROM books WHERE work_id IS NOT NULL AND id IN ({','.join('?' * len(chunk))})",
+            chunk)}
+    for work_id in works:
+        with db.transaction() as c:
+            members = [r[0] for r in c.execute("SELECT id FROM books WHERE work_id=?", (work_id,))]
+            touched |= tags_of(c, members)
+            matching.share_tags(c, members)
+            touched |= tags_of(c, members)
+    touched_list = sorted(touched)
+    with db.transaction() as c:
+        for i in range(0, len(touched_list), 500):
+            chunk = touched_list[i:i + 500]
+            q = ",".join("?" * len(chunk))
+            c.execute(f"UPDATE tags SET books = (SELECT COUNT(DISTINCT book_id) FROM book_tags WHERE tag = tags.id "
+                      f"AND source != 'maybe') WHERE id IN ({q})", chunk)
+            # one-off site labels no book has any more
+            c.execute(f"DELETE FROM tags WHERE id IN ({q}) AND known = 0 AND category = 'other' "
+                      f"AND NOT EXISTS (SELECT 1 FROM book_tags WHERE tag = tags.id)", chunk)
+    _existing_tags.clear()
+    return touched
+
+
+def _replace_maybe_tags(c, book_id: int, found: list[dict]):
+    """Possible tags from the opening chapters, except ones the book already has for certain."""
+    c.execute("DELETE FROM book_tags WHERE book_id=? AND source='maybe'", (book_id,))
+    have = {r[0] for r in c.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=?", (book_id,))}
+    for item in found:
+        if item["tag"] in have:
+            continue
+        _ensure_tag(c, item["tag"], None)
+        c.execute("INSERT OR IGNORE INTO book_tags(book_id, tag, source, raw, score) VALUES(?,?,?,?,?)",
+                  (book_id, item["tag"], "maybe", f"{item['per_10k']} per 10,000 words", item["score"]))
+
+
+def _drop_confirmed_maybes(c, book_id: int | None = None):
+    """A possible tag that the book now has for certain isn't 'possible' any more."""
+    c.execute("DELETE FROM book_tags WHERE source='maybe' " + ("AND book_id=? " if book_id else "") +
+              "AND EXISTS(SELECT 1 FROM book_tags x WHERE x.book_id=book_tags.book_id AND x.tag=book_tags.tag "
+              "AND x.source!='maybe')", (book_id,) if book_id else ())
+
+
 def _refresh_rules(c, book_id: int):
-    have = {r[0] for r in c.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=? AND source!='rule'",
-                                    (book_id,))}
+    have = {r[0] for r in c.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=? AND "
+                                    "source NOT IN ('rule','maybe')", (book_id,))}
     _replace_tags(c, book_id, "rule", [(t, None) for t in T.implied(have)])
 
 
@@ -121,6 +217,7 @@ def _recompute_pov(c, book_id: int):
 
 def save_analysis(book_id: int, result: dict | None, error: str | None = None):
     from .analysis.pov import VERSION
+    from .analysis.themes import VERSION as THEMES_VERSION
     with db.transaction() as c:
         if result is None:
             c.execute(
@@ -134,7 +231,8 @@ def save_analysis(book_id: int, result: dict | None, error: str | None = None):
                 "words, details, version, error, at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL,?)",
                 (book_id, result["pov"], result.get("confidence"), result.get("narrator"), result.get("tense"),
                  int(bool(result.get("game_system"))), result.get("chapters"), result.get("words"),
-                 jdump({"note": result.get("note"), "lang": result.get("lang"), **result.get("details", {})}),
+                 jdump({"note": result.get("note"), "lang": result.get("lang"), **result.get("details", {}),
+                        **({"themes_version": THEMES_VERSION} if "themes" in result else {})}),
                  VERSION, now()))
             text_tags = []
             if result["pov"] in ("first", "third", "second"):
@@ -149,6 +247,8 @@ def save_analysis(book_id: int, result: dict | None, error: str | None = None):
                 text_tags.append(("game-messages", None))
             _replace_tags(c, book_id, "text", text_tags)
             _refresh_rules(c, book_id)
+            if "themes" in result:
+                _replace_maybe_tags(c, book_id, result["themes"])
         c.execute("UPDATE books SET analyzed_at=? WHERE id=?", (now(), book_id))
         _recompute_pov(c, book_id)
 
@@ -186,7 +286,7 @@ def refresh_tag_counts():
     with db.transaction() as c:
         c.execute("UPDATE tags SET books = 0")
         c.execute("UPDATE tags SET books = x.n FROM (SELECT tag, COUNT(DISTINCT book_id) AS n FROM book_tags "
-                  "GROUP BY tag) AS x WHERE tags.id = x.tag")
+                  "WHERE source != 'maybe' GROUP BY tag) AS x WHERE tags.id = x.tag")
 
 
 def reapply_all_tags(progress=None):
@@ -194,12 +294,11 @@ def reapply_all_tags(progress=None):
     T.reload()
     _existing_tags.clear()
     c = db.conn()
-    ids = [r[0] for r in c.execute("SELECT DISTINCT book_id FROM book_tags")]
+    ids = [r[0] for r in c.execute("SELECT DISTINCT book_id FROM book_tags UNION "
+                                   "SELECT id FROM books WHERE labels IS NOT NULL AND labels != '[]'")]
     for n, book_id in enumerate(ids):
         with db.transaction() as tc:
-            raws = [r[0] for r in tc.execute("SELECT DISTINCT raw FROM book_tags WHERE book_id=? AND source='site' "
-                                             "AND raw IS NOT NULL", (book_id,))]
-            _replace_tags(tc, book_id, "site", [(t, raw) for raw in raws for t in T.canonical(raw)])
+            _set_site_labels(tc, book_id, _site_labels(tc, book_id))
             _refresh_rules(tc, book_id)
             _recompute_pov(tc, book_id)
         if progress and n % 500 == 0:
@@ -209,6 +308,8 @@ def reapply_all_tags(progress=None):
             i = T.info(tid)
             tc.execute("UPDATE tags SET label=?, label_ru=?, label_uk=?, category=?, known=1 WHERE id=?",
                        (i["label"], i.get("label_ru"), i.get("label_uk"), i.get("category"), tid))
+        tc.execute("UPDATE tags SET category='fandom' WHERE id LIKE 'fandom:%'")
+        _drop_confirmed_maybes(tc)
         # labels that now map to a shared tag leave their old one-off tags behind
         tc.execute("DELETE FROM tags WHERE known=0 AND id NOT IN (SELECT DISTINCT tag FROM book_tags)")
     refresh_tag_counts()

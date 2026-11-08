@@ -82,7 +82,6 @@ def find_duplicates(progress=None) -> int:
     with db.transaction() as tc:
         tc.execute("UPDATE books SET work_id=NULL, is_primary=1 WHERE work_id IS NOT NULL")
         tc.execute("DELETE FROM book_tags WHERE source='other-site'")
-    from .library import _refresh_rules, _recompute_pov, _replace_tags  # local import: avoids a cycle
     for n, members in enumerate(groups.values()):
         work_id = members[0]
         with db.transaction() as tc:
@@ -91,15 +90,20 @@ def find_duplicates(progress=None) -> int:
                 f"SELECT id FROM books WHERE id IN ({q}) ORDER BY (meta_at IS NOT NULL) DESC, "
                 f"COALESCE(popularity,0) DESC, COALESCE(chapters,0) DESC LIMIT 1", members).fetchone()["id"]
             tc.execute(f"UPDATE books SET work_id=?, is_primary=(id=?) WHERE id IN ({q})", [work_id, best, *members])
-            own = {m: {r[0] for r in tc.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=? AND "
-                                                "source IN ('site','text','user')", (m,))} for m in members}
-            for m in members:
-                # Tags the other copies have and this one lacks. Narration from another copy only counts
-                # when this copy has neither a site tag nor its own analysis (see library._recompute_pov).
-                others = set().union(*(own[o] for o in members if o != m)) - own[m]
-                _replace_tags(tc, m, "other-site", [(t, None) for t in others])
-                _refresh_rules(tc, m)
-                _recompute_pov(tc, m)
+            share_tags(tc, members)
         if progress and n % 200 == 0:
             progress(n, len(groups))
     return len(groups)
+
+
+def share_tags(tc, members: list[int]) -> None:
+    """Each copy of a work gets the tags the other copies have and it lacks (source 'other-site'). Narration from
+    another copy only counts when this copy has neither a site tag nor its own analysis (see library._recompute_pov)."""
+    from .library import _refresh_rules, _recompute_pov, _replace_tags  # local import: avoids a cycle
+    own = {m: {r[0] for r in tc.execute("SELECT DISTINCT tag FROM book_tags WHERE book_id=? AND "
+                                        "source IN ('site','text','user')", (m,))} for m in members}
+    for m in members:
+        others = set().union(*(own[o] for o in members if o != m)) - own[m]
+        _replace_tags(tc, m, "other-site", [(t, None) for t in others])
+        _refresh_rules(tc, m)
+        _recompute_pov(tc, m)
