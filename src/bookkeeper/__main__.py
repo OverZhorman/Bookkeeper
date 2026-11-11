@@ -3,6 +3,7 @@ import argparse
 import logging
 import logging.handlers
 import socket
+import sqlite3
 import sys
 import threading
 import webbrowser
@@ -29,6 +30,7 @@ def main():
             webbrowser.open(url)
         return
 
+    print(f"\n  Starting Bookkeeper {__version__}...", flush=True)
     config.ensure_dirs()
     handler = logging.handlers.RotatingFileHandler(config.LOG_DIR / "bookkeeper.log", maxBytes=5_000_000,
                                                    backupCount=3, encoding="utf-8")
@@ -38,8 +40,17 @@ def main():
     console.setLevel(logging.WARNING)
     logging.getLogger().addHandler(console)
 
-    db.init()
+    print("  Opening your library...", flush=True)
+    try:
+        db.init(progress=lambda msg: print(f"  {msg}", flush=True))
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e):
+            print("\n  Your library is in use by another copy of Bookkeeper that is still running.\n"
+                  "  Close its window, or end any leftover \"python.exe\" in Task Manager, then start again.\n")
+            sys.exit(1)
+        raise
     tags.ensure_user_file()
+    print("  Starting the background collectors...", flush=True)
 
     from .crawler import Manager
     from .web.app import create_app

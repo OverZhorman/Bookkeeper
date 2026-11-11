@@ -1,5 +1,6 @@
 """SQLite storage. One connection per thread; WAL mode so the crawler and the web UI can work at once."""
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -237,8 +238,8 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def init(path: Path | None = None) -> None:
-    """Create tables if needed. Safe to call many times."""
+def init(path: Path | None = None, progress=None) -> None:
+    """Create tables if needed. Safe to call many times. `progress(message)` hears about slow one-time upgrades."""
     global _initialized_path
     path = Path(path or config.DB_PATH)
     with _init_lock:
@@ -246,6 +247,9 @@ def init(path: Path | None = None) -> None:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = _connect(path)
+        if progress and _needs_upgrade(conn):
+            progress("Updating your library for this version. This happens once and can take several minutes "
+                     "on a big library - please leave this window open...")
         conn.executescript(SCHEMA)
         for table, column, definition in MIGRATIONS:
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -264,6 +268,18 @@ def init(path: Path | None = None) -> None:
         conn.close()
         _initialized_path = path
         _local.__dict__.clear()
+
+
+def _needs_upgrade(conn: sqlite3.Connection) -> bool:
+    """True when this library was made by an older version (new columns or indexes to add)."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='books'").fetchone():
+        return False  # a brand-new library: nothing to upgrade
+    for table, column, _ in MIGRATIONS:
+        if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            return True
+    have = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    wanted = set(re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", SCHEMA))
+    return bool(wanted - have)
 
 
 def conn() -> sqlite3.Connection:
