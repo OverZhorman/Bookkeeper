@@ -1207,7 +1207,9 @@ async function renderTag(id) {
     h("div", { class: "crumbs" }, h("a", { href: "#/tags" }, "All tags"), " › ", CATS[t.category] || t.category || ""),
     h("div", { class: "titlerow" }, h("h1", {}, name),
       t.editable ? h("a", { class: `btn small ${editing ? "primary" : ""}`, href: tagHref(t.id) + (editing ? "" : "&edit=1"),
-        title: editing ? "Back to reading" : "Change its names, description, aliases, parent and child tags, anti-tags" }, editing ? "✓ Done editing" : "✎ Edit tag") : null),
+        title: editing ? "Back to reading" : "Change its names, description, aliases, parent and child tags, anti-tags" }, editing ? "✓ Done editing" : "✎ Edit tag") : null,
+      t.editable ? h("a", { class: "btn small", href: "#/tags?" + toQuery({ ai: t.id }),
+        title: "Let Gemini, ChatGPT or another AI chat sort this tag's aliases into child tags and fix its links" }, "✨ Improve with an AI chat") : null),
     h("div", { class: "names" }, [["English", t.label], ["Русский", t.label_ru], ["Українська", t.label_uk]].filter(([, v]) => v).map(([k, v]) =>
       h("span", {}, h("span", { class: "faint" }, `${k}: `), v))),
     t.description ? h("p", { class: "lead" }, t.description)
@@ -1300,6 +1302,11 @@ async function renderAllTags() {
   const filter = h("input", { class: "input", placeholder: "Find a tag: type part of a name in any language…", style: { maxWidth: "420px" } });
   const body = h("div", {});
   const newForm = h("div", {});
+  const aiSlot = h("div", {});
+  const openAi = (q) => {
+    if (aiSlot.firstChild && q == null) { aiSlot.replaceChildren(); return; }
+    aiSlot.replaceChildren(tagAiPanel(q || ""));
+  };
   const draw = () => {
     const q = filter.value.trim().toLowerCase().replace(/ё/g, "е");
     const by = {};
@@ -1334,13 +1341,17 @@ async function renderAllTags() {
     h("div", { class: "toolbar2" },
       h("button", { class: "btn primary", onclick: openNew }, "+ New tag"),
       h("a", { class: "btn", href: "#/labels", title: "Labels from the sites that aren't shared tags, most common first" }, "Fix site labels"),
-      h("a", { class: "btn", href: "#/labels?tab=mine" }, "My label fixes")),
+      h("a", { class: "btn", href: "#/labels?tab=mine" }, "My label fixes"),
+      h("button", { class: "btn", title: "Let Gemini, ChatGPT or another AI chat sort aliases into child tags and fix parent, child and anti-tag links, many tags at a time", onclick: () => openAi() }, "✨ Improve tags with an AI chat")),
     newForm,
+    aiSlot,
     h("div", { style: { margin: "0 0 6px" } }, filter),
     h("div", { class: "legend", style: { marginBottom: "6px" } }, h("span", {}, "Faded: no book has it yet"), h("span", {}, "Tag names in: "),
       ...[["en", "English"], ["ru", "Русский"], ["uk", "Українська"]].map(([k, l]) => chip(l, tagLang === k, () => { tagLang = k; store.set("tagLang", k); renderAllTags(); }))),
     body));
   draw();
+  const { params } = parseHash();
+  if (params.ai != null) openAi(params.ai);
 }
 
 // ---------- fixing site labels ----------
@@ -1538,6 +1549,8 @@ function aiPanel(getFilters, onApplied) {
         c.problems ? h("span", { class: "warn" }, `, ${c.problems} can't be used`) : null, "."),
       newChecks.length ? h("div", { class: "ainew" }, h("b", {}, "New tags it suggests"), newChecks.map(({ t, box }) => h("label", { class: "check" }, box,
         h("span", {}, h("b", {}, t.label || t.label_ru), t.label_ru && t.label ? ` / ${t.label_ru}` : "", ` · ${CATS[t.category] || t.category}`,
+          t.parents && t.parents.length ? h("span", {}, " · child of ", h("b", {}, t.parents.map((x) => x.label).join(" + "))) : null,
+          t.anti && t.anti.length ? h("span", { class: "faint" }, ` · contradicts ${t.anti.map((x) => x.label).join(", ")}`) : null,
           t.description ? h("span", { class: "faint" }, ` — ${t.description}`) : null,
           h("span", { class: "faint" }, t.problem ? ` (${t.problem})` : ` · for ${t.used_by} label${t.used_by === 1 ? "" : "s"}`))))) : null,
       h("div", { class: "airows" }, itemChecks.map(({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
@@ -1560,6 +1573,126 @@ function aiPanel(getFilters, onApplied) {
         h("button", { class: "btn small", onclick: () => fileIn.click() }, "Load a file…"), fileIn,
         h("span", { class: "faint" }, "Copy the chat's whole reply (its code block has a copy button). If it stops halfway, paste what it wrote: the rest stays in the list.")))),
     preview);
+}
+
+// Improving shared tags with an AI chat: their aliases become child tags, wrong ones move, links get fixed.
+const LINK_WORDS = { parent: ["is a child of", "is no longer a child of"], child: ["gets the child tag", "loses the child tag"],
+  anti: ["contradicts", "no longer contradicts"], tag: ["", ""] };
+function tagAiPanel(startQ) {
+  const q = h("input", { class: "input small", value: startQ || "", placeholder: "Which tags: names or ids, separated by commas (empty: most aliases first)", style: { minWidth: "320px", flex: "1" } });
+  const cat = h("select", { class: "input", style: { width: "auto" } }, h("option", { value: "" }, "All categories but fandoms"),
+    (meta.categories || Object.keys(CATS)).filter((c) => c !== "other").map((c) => h("option", { value: c }, CATS[c] || c)));
+  const limit = h("select", { class: "input", style: { width: "auto" } },
+    [300, 600, 1000, 2000, 4000].map((n) => h("option", { value: n, selected: n === 600 }, `about ${fmtNum(n)} aliases`)));
+  const again = h("input", { type: "checkbox" });
+  const reviewedNote = h("span", { class: "faint" });
+  const info = h("span", { class: "faint" });
+  const params = () => ({ q: q.value.trim(), cat: cat.value, reviewed: again.checked ? 1 : 0, limit: limit.value });
+  const copy = async () => {
+    fill(info, h("span", { class: "spinner tiny" }), " Preparing…");
+    try {
+      const r = await api.get("/api/tagai/export?" + toQuery(params()));
+      if (!r.tags) { fill(info, h("span", { class: "warn" }, "No tag with aliases left here. Tick “again” to include the ones already reviewed.")); return; }
+      await copyText(r.text);
+      fill(info, `Copied ${r.tags} of ${fmtNum(r.total)} tags with ${fmtNum(r.aliases)} aliases (${fmtNum(r.chars)} characters).`);
+      reviewedNote.textContent = r.reviewed ? `${fmtNum(r.reviewed)} reviewed so far` : "";
+      toast("Copied: paste it into the AI chat");
+    } catch (e) { fill(info, h("span", { class: "warn" }, String(e.message || e))); }
+  };
+  const download = () => { location.href = "/api/tagai/export.txt?" + toQuery(params()); };
+  const reply = h("textarea", { class: "note", placeholder: "Paste the AI's whole reply here…", style: { minHeight: "110px" } });
+  const preview = h("div", { class: "aipreview" });
+  const past = h("div", {});
+  const fileIn = h("input", { type: "file", accept: ".txt,.json,.jsonl,.md,text/plain", class: "hidden",
+    onchange: async (e) => { const f = e.target.files[0]; if (f) { reply.value = await f.text(); check(); } } });
+  const check = async () => {
+    if (!reply.value.trim()) { toast("Paste the AI's reply first"); return; }
+    fill(preview, h("span", { class: "spinner tiny" }), " Checking the answers…");
+    try { drawPreview(await api.post("/api/tagai/check", { text: reply.value })); }
+    catch (e) { fill(preview, h("div", { class: "warn" }, String(e.message || e))); }
+  };
+  const names = (list) => list.map((t, i) => [i ? " + " : "", t.label]);
+  const undo = async (id) => {
+    if (!confirm("Undo this whole import? Its aliases and links go back to how they were, and the tags it made are deleted.")) return;
+    try { await api.post("/api/tagai/undo", { id }); toast("Import undone"); tagCache.clear(); fill(preview); loadHistory(); }
+    catch (e) { toast(String(e.message || e)); }
+  };
+  const drawPreview = (r) => {
+    const c = r.counts;
+    const newChecks = r.new_tags.map((t) => ({ t, box: h("input", { type: "checkbox", checked: !t.problem && t.used_by > 0, disabled: !!t.problem }) }));
+    const rows = [...r.aliases, ...r.links].map((it) => ({ it, box: h("input", { type: "checkbox", checked: !it.problem, disabled: !!it.problem }) }));
+    const applyBtn = h("button", { class: "btn primary" });
+    const result = h("span", {});
+    const count = () => { applyBtn.textContent = `Apply ${rows.filter((x) => x.box.checked).length} changes`; };
+    rows.forEach((x) => x.box.addEventListener("change", count));
+    count();
+    applyBtn.addEventListener("click", async () => {
+      applyBtn.disabled = true;
+      fill(result, h("span", { class: "spinner tiny" }), " Changing the tags on your books…");
+      try {
+        const done = await api.post("/api/tagai/apply", { text: reply.value,
+          keys: rows.filter((x) => x.box.checked).map((x) => x.it.key),
+          new_tags: newChecks.filter((x) => x.box.checked).map((x) => x.t.id) });
+        reply.value = "";
+        tagCache.clear();
+        fill(preview, h("div", { class: "fixed" }, `✓ ${fmtNum(done.labels)} aliases moved, ${fmtNum(done.links)} links changed`,
+          done.new_tags ? `, ${done.new_tags} new tag${done.new_tags === 1 ? "" : "s"}` : "", ` on ${booksText(done.books)}. `),
+          done.import ? h("button", { class: "btn small ghost", onclick: () => undo(done.import) }, "Undo this import") : null,
+          h("div", { class: "faint" }, `${done.reviewed} tag${done.reviewed === 1 ? "" : "s"} marked as reviewed: the next request brings the next ones.`));
+        loadHistory();
+      } catch (e) { applyBtn.disabled = false; fill(result, h("span", { class: "warn" }, String(e.message || e))); }
+    });
+    const aliasRow = ({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
+      h("span", { class: "lname" }, it.label), it.before.length ? h("span", { class: "faint" }, names(it.before)) : null, h("span", { class: "arrow" }, "→"),
+      it.problem ? h("span", { class: "warn" }, it.problem) : it.action === "hide" ? h("span", { class: "muted" }, "hide from every book") : h("span", {}, names(it.tags)));
+    const linkRow = ({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
+      h("span", { class: "lname" }, it.label), h("span", { class: it.on ? "" : "muted" }, (LINK_WORDS[it.kind] || ["", ""])[it.on ? 0 : 1]),
+      it.other_label ? h("b", {}, it.other_label) : null, it.problem ? h("span", { class: "warn" }, `(${it.problem})`) : null);
+    const aRows = rows.filter((x) => "action" in x.it), lRows = rows.filter((x) => !("action" in x.it));
+    fill(preview,
+      h("div", { class: "aisum" }, `${c.aliases} aliases to move, ${c.hide} to hide, ${c.links} link changes, ${c.new_tags} new tags`,
+        c.problems ? h("span", { class: "warn" }, `, ${c.problems} can't be used`) : null, ".",
+        r.reviewed.length ? h("span", { class: "faint", title: r.reviewed.map((t) => t.label).join("\n") }, ` Reviewed: ${r.reviewed.length} tag${r.reviewed.length === 1 ? "" : "s"}.`) : null),
+      newChecks.length ? h("div", { class: "ainew" }, h("b", {}, "New tags it suggests"), newChecks.map(({ t, box }) => h("label", { class: "check" }, box,
+        h("span", {}, h("b", {}, t.label || t.label_ru), t.label_ru && t.label ? ` / ${t.label_ru}` : "", ` · ${CATS[t.category] || t.category}`,
+          t.parents.length ? h("span", {}, " · child of ", h("b", {}, names(t.parents))) : null,
+          t.anti.length ? h("span", { class: "faint" }, ` · contradicts ${t.anti.map((x) => x.label).join(", ")}`) : null,
+          t.description ? h("span", { class: "faint" }, ` — ${t.description}`) : null,
+          h("span", { class: "faint" }, t.problem ? ` (${t.problem})` : ` · ${t.used_by} alias${t.used_by === 1 ? "" : "es"}`),
+          t.unknown && t.unknown.length ? h("span", { class: "warn" }, ` (no tag ${t.unknown.map((x) => `“${x}”`).join(", ")})`) : null)))) : null,
+      aRows.length ? h("div", { class: "airows" }, aRows.map(aliasRow)) : null,
+      lRows.length ? h("div", { class: "airows", style: { marginTop: "6px" } }, lRows.map(linkRow)) : null,
+      h("div", { class: "shelf", style: { marginTop: "8px" } }, applyBtn,
+        h("button", { class: "btn small ghost", onclick: () => { rows.forEach((x) => { if (!x.box.disabled) x.box.checked = true; }); count(); } }, "Tick all"),
+        h("button", { class: "btn small ghost", onclick: () => { rows.forEach((x) => { x.box.checked = false; }); count(); } }, "Untick all"),
+        result));
+  };
+  const loadHistory = async () => {
+    let list = [];
+    try { list = await api.get("/api/tagai/imports"); } catch { /* none shown */ }
+    fill(past, list.length ? h("details", {}, h("summary", { class: "faint" }, `Earlier imports (${list.length})`),
+      list.map((m) => h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()),
+        h("span", { class: "n" }, `${fmtNum(m.count)} aliases, ${fmtNum(m.link_count || 0)} links, ${booksText(m.books)}`),
+        m.new_tags && m.new_tags.length ? h("span", { class: "faint" }, `${m.new_tags.length} new tag${m.new_tags.length === 1 ? "" : "s"}`) : null,
+        m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: () => undo(m.id) }, "Undo this import")))) : null);
+  };
+  loadHistory();
+  return h("div", { class: "aibox" },
+    h("h2", {}, "Improve tags with an AI chat"),
+    h("p", { class: "faint" }, "Many site labels became aliases of a broad tag though they name something narrower. The chat sorts them out: it suggests child tags (“Monster protagonist” under “Non-human lead”) and moves the aliases to them, moves or hides wrong aliases, and adds or removes parent, child and anti-tag links. Books keep the broad tag through the parent link. You check every change first, and a whole import can be undone."),
+    h("div", { class: "aistep" }, h("span", { class: "stepn" }, "1"), h("div", {},
+      h("div", { class: "shelf" }, q, cat),
+      h("div", { class: "shelf", style: { marginTop: "6px" } }, limit,
+        h("label", { class: "check", title: "Tags you applied an answer for are left out of the next request, unless you tick this" }, again, "again, with reviewed tags"),
+        h("button", { class: "btn small primary", onclick: copy }, "Copy the request"),
+        h("button", { class: "btn small", onclick: download, title: "For very long requests: attach the file in the chat instead of pasting" }, "Download as a file"), info),
+      h("div", { class: "faint" }, "The tags with the most aliases first (or the ones you named), with their links and how many books have each alias, plus the list of shared tags and instructions. ", reviewedNote))),
+    h("div", { class: "aistep" }, h("span", { class: "stepn" }, "2"), h("div", {},
+      reply,
+      h("div", { class: "shelf", style: { marginTop: "6px" } }, h("button", { class: "btn small primary", onclick: check }, "Check the answers"),
+        h("button", { class: "btn small", onclick: () => fileIn.click() }, "Load a file…"), fileIn,
+        h("span", { class: "faint" }, "Copy the chat's whole reply (its code block has a copy button).")))),
+    preview, past);
 }
 
 async function renderLabels() {

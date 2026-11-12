@@ -179,31 +179,52 @@ def link(kind: str, tag_id: str, other: str, on: bool) -> None:
             if on and other in T.descendants(tag_id):
                 raise ValueError(f"{T.info(other)['label']} is already narrower than {T.info(tag_id)['label']}, "
                                  f"so it can't be broader too.")
-            ours = other in T.RULES.get(tag_id, [])
-            rules, off = _table("rules"), _table("rules_off")
-            rules[tag_id] = [x for x in rules.get(tag_id, []) if x != other]
-            off[tag_id] = [x for x in off.get(tag_id, []) if x != other]
-            if on and not ours:
-                rules[tag_id].append(other)
-            if not on and ours:
-                off[tag_id].append(other)
-            T.write_tables({("rules",): _clean(rules), ("rules_off",): _clean(off)})
-        else:
-            if on and (other in T.ancestors(tag_id) or other in T.descendants(tag_id)):
-                raise ValueError(f"{T.info(other)['label']} and {T.info(tag_id)['label']} are in the same family, "
-                                 f"so they can't contradict each other.")
-            ours = other in T.ANTI.get(tag_id, []) or tag_id in T.ANTI.get(other, [])
-            pair = {tag_id, other}
-            anti = {k: [x for x in v if {k, x} != pair] for k, v in _table("anti").items()}
-            off = {k: [x for x in v if {k, x} != pair] for k, v in _table("anti_off").items()}
-            if on and not ours:
-                anti.setdefault(tag_id, []).append(other)
-            if not on and ours:
-                off.setdefault(tag_id, []).append(other)
-            T.write_tables({("anti",): _clean(anti), ("anti_off",): _clean(off)})
+        elif on and (other in T.ancestors(tag_id) or other in T.descendants(tag_id)):
+            raise ValueError(f"{T.info(other)['label']} and {T.info(tag_id)['label']} are in the same family, "
+                             f"so they can't contradict each other.")
+        tabs = link_tables()
+        set_link(tabs, kind, tag_id, other, on)
+        T.write_tables(link_changes(tabs))
         T.reload()
     if kind == "parent":
         library.refresh_rules_for([tag_id])
+
+
+def link_tables() -> dict[str, dict[str, list[str]]]:
+    """my_tags.toml's link tables as they are now, to change with set_link() and save with link_changes()."""
+    return {name: _table(name) for name in ("rules", "rules_off", "anti", "anti_off")}
+
+
+def link_changes(tabs: dict) -> dict:
+    return {(name,): _clean(v) for name, v in tabs.items()}
+
+
+def set_link(tabs: dict, kind: str, tag_id: str, other: str, on: bool) -> None:
+    """Add (on) or remove one link in the tables from link_tables(), without checking it: kind "parent" (other is
+    broader than tag_id), "child" (other is narrower) or "anti". Bookkeeper's own links are switched off, not lost."""
+    if kind == "child":
+        kind, tag_id, other = "parent", other, tag_id
+    if kind == "parent":
+        ours = other in T.RULES.get(tag_id, [])
+        rules, off = tabs["rules"], tabs["rules_off"]
+        rules[tag_id] = [x for x in rules.get(tag_id, []) if x != other]
+        off[tag_id] = [x for x in off.get(tag_id, []) if x != other]
+        if on and not ours:
+            rules[tag_id].append(other)
+        if not on and ours:
+            off[tag_id].append(other)
+    elif kind == "anti":
+        ours = other in T.ANTI.get(tag_id, []) or tag_id in T.ANTI.get(other, [])
+        pair = {tag_id, other}
+        anti = {k: [x for x in v if {k, x} != pair] for k, v in tabs["anti"].items()}
+        off = {k: [x for x in v if {k, x} != pair] for k, v in tabs["anti_off"].items()}
+        if on and not ours:
+            anti.setdefault(tag_id, []).append(other)
+        if not on and ours:
+            off.setdefault(tag_id, []).append(other)
+        tabs["anti"], tabs["anti_off"] = anti, off
+    else:
+        raise ValueError("Unknown kind of link.")
 
 
 def alias(tag_id: str, name: str, on: bool) -> dict:

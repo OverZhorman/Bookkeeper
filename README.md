@@ -10,6 +10,7 @@ Your own catalog of books and web novels from the sites you read. It merges ever
 - **Possible tags** found in the opening chapters (system messages, cultivation, dragons…), kept apart from the certain ones.
 - **Fix site labels in bulk**: labels Bookkeeper doesn't recognize are listed most common first, with suggestions. Say once what one means (or hide it) and every book with it follows.
 - **Edit any tag**: names in three languages, description, aliases, parent and child tags, anti-tags; or make tags of your own.
+- **Improve tags with an AI chat**, many at a time: aliases of a broad tag become child tags (*Monster protagonist* under *Non-human lead*), wrong aliases move, links get fixed.
 - **Filter and sort by anything**: fanfiction and fandoms, orientation, age rating (G to NC-21), books not updated for a month or a year, and more. Keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
 - **Downloads** books as **EPUB, FB2 or TXT** for your e-reader. Logged in, downloads include the chapters you bought.
 - **Logs in for you**, and can hand a book to a browser extension such as ExLoader.
@@ -166,6 +167,18 @@ Thousands of labels are a lot to fix by hand, so an AI chat (Gemini, ChatGPT, �
 
 Each import can be undone as a whole: right after it, or later under **My fixes**. An import never touches the names of shared tags, only labels that are still unrecognized.
 
+The chat can also suggest new tags, with their **parent tags**: several labels like «гг монстр» and «monster protagonist» become a new *Monster protagonist* tag under *Non-human lead*, so their books get both. The check shows each new tag's parents before you apply it.
+
+### Improving tags with an AI chat
+
+Many site labels end up as aliases of a broad tag although they name something narrower. On the **Tags** page, press **✨ Improve tags with an AI chat** (or **✨ Improve with an AI chat** on one tag's page). The request holds the tags with the most aliases (or the ones you name), their parent, child and anti-tags, every alias with how many books have it, and the list of shared tags. The chat answers with:
+
+- **new child tags**, and which aliases move to them (*Non-human lead* → *Monster protagonist*, *Humanoid protagonist*, *Genderless protagonist*…). Books keep the broad tag through the parent link;
+- aliases that mean something else and move to the right tags, or junk to hide;
+- parent, child and anti-tag links to add or remove between shared tags.
+
+Check the answers, untick any you don't want, and apply. Tags you applied an answer for are marked as reviewed, so the next request brings the next ones (tick **again, with reviewed tags** to include them). Every import can be undone as a whole under **Earlier imports**.
+
 ## Editing tags
 
 Open **Tags** in the top bar and click a tag, then **✎ Edit tag**. There you can change:
@@ -234,6 +247,7 @@ Code layout (`src/bookkeeper/`):
 - `tagquery.py`: the tag search language. `search.py`: library filters, suggestions and tag pages.
 - `labels.py`: fixing site labels for every book at once (the Fix site labels page).
 - `tagedit.py`: editing tags from their pages (saved in `data/my_tags.toml`).
+- `tagai.py`: improving tags with an AI chat (aliases to child tags, links), many at a time.
 - `browser.py`: Waterfox (WebDriver BiDi) and Edge (Playwright).
 - `accounts.py`, `secret.py`: logins, saved passwords and sessions (encrypted with Windows DPAPI).
 - `handoff.py`: picking up books downloaded with a browser extension.

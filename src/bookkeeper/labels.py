@@ -245,14 +245,25 @@ def _books_with_many(c, names) -> set[int]:
     return {r[0] for r in rows if any(T.key(x) in keys for x in jload(r[1], []) or [])}
 
 
-def apply_many(entries, new_tags=()) -> dict:
+def _link_is(kind: str, a: str, b: str) -> bool:
+    if kind == "child":
+        kind, a, b = "parent", b, a
+    return b in T.parents(a) if kind == "parent" else b in T.anti(a)
+
+
+def apply_many(entries, new_tags=(), links=()) -> dict:
     """Many label fixes in one go: entries [(label, ids)], where ids None undoes a fix, [] hides the label and
-    [its own id] leaves it as it is; new_tags are made first. One write to my_tags.toml, one re-tagging pass.
-    Returns how many labels and books changed, and what each label meant before (for undo)."""
+    [its own id] leaves it as it is; new_tags are made first; links [(kind, tag, other, on)] add or remove parent,
+    child and anti-tag links (see tagedit.set_link). One write to my_tags.toml, one re-tagging pass.
+    Returns how many labels and books changed, what each label meant before, and the links that changed (for undo)."""
+    from . import tagedit  # local import: tagedit uses this module
     c = db.conn()
     entries = [(label.strip(), ids) for label, ids in entries if T.key(label)]
-    affected = _books_with_many(c, [label for label, _ in entries])
+    # a new tag's names mean it from now on, even where they were another tag's alias
+    new_names = [t[k] for t in new_tags for k in ("label", "label_ru", "label_uk") if t.get(k)]
+    affected = _books_with_many(c, [label for label, _ in entries] + new_names)
     previous: dict[str, list[str] | None] = {}
+    links = [list(x) for x in links if _link_is(*x[:3]) != bool(x[3])]  # only the ones that change something
     with T._FILE_LOCK:
         fixes = T.fixes()
         by_key = {T.key(name): name for name in fixes}
@@ -265,13 +276,23 @@ def apply_many(entries, new_tags=()) -> dict:
                 fixes[label] = list(dict.fromkeys(ids))
                 by_key[T.key(label)] = label
         changes = {("tags", t["id"]): {k: v for k, v in t.items() if k != "id" and v} for t in new_tags}
-        changes[("fixes",)] = dict(sorted(fixes.items(), key=lambda kv: T.key(kv[0])))
+        if entries:
+            changes[("fixes",)] = dict(sorted(fixes.items(), key=lambda kv: T.key(kv[0])))
+        if links:
+            tabs = tagedit.link_tables()
+            for kind, a, b, on in links:
+                tagedit.set_link(tabs, kind, a, b, on)
+            changes.update(tagedit.link_changes(tabs))
         T.write_tables(changes)
     T.reload()
     if new_tags:
         library.sync_tag_rows([t["id"] for t in new_tags])
-    library.retag_books(affected)
-    return {"labels": len(entries), "books": len(affected), "previous": previous}
+    if affected:
+        library.retag_books(affected)
+    touched = {a if kind == "parent" else b for kind, a, b, _ in links if kind in ("parent", "child")}
+    if touched:
+        library.refresh_rules_for(touched)
+    return {"labels": len(entries), "books": len(affected), "previous": previous, "links": links}
 
 
 AI_PROMPT = """\
@@ -291,8 +312,11 @@ For every site label, answer with one JSON object on its own line:
 
 You may also propose a new shared tag when several labels share a useful meaning that no shared tag covers.
 Write it once, on its own line before the labels that use it, then use its id in "tags":
-{"new_tag": {"id": "complicated-relationships", "en": "Complicated relationships", "ru": "Сложные отношения", "uk": "Складні стосунки", "category": "relationship", "description": "The main characters' relationship is complicated."}}
+{"new_tag": {"id": "complicated-relationships", "en": "Complicated relationships", "ru": "Сложные отношения", "uk": "Складні стосунки", "category": "relationship", "description": "The main characters' relationship is complicated.", "parents": ["romance"]}}
 Categories: genre, theme, protagonist, setting, orientation, relationship, content, format, demographic, fandom.
+Tags form a family tree. "parents" are broader shared tags that EVERY book with the new tag also has: books get
+them automatically, so a new tag that is a narrower kind of a shared tag should name it as a parent.
+"anti" (optional) lists shared tags that contradict the new tag (can't both be true of one book).
 
 Guidelines:
 - Use only ids from SHARED TAGS, or the ids of new tags you proposed. Don't invent other ids.
@@ -303,6 +327,9 @@ Guidelines:
   with it. Use them as hints, but decide by what the label itself means.
 - Prefer the most specific tag that fits. Don't add broader tags that follow anyway (litrpg already brings
   rpg-elements), and don't map a label to a tag just because its books often have it.
+- When several labels name the same narrower kind of a shared tag ("гг монстр", "monster protagonist",
+  "гг паук" are all kinds of "nonhuman-lead"), propose a new child tag with that shared tag in "parents" and
+  map the labels to it, instead of mapping them all to the broad tag. Don't make a new tag for one rare label.
 - Answer only with JSON lines, one for every site label, all in one code block. No explanations.
 """
 
@@ -385,18 +412,65 @@ def _new_tag(spec: dict) -> dict:
         r"[^a-z0-9]+", "-", (names.get("label") or "").lower()).strip("-")
     category = str(spec.get("category") or "theme").strip().lower()
     out = {"id": tid, **names, "category": category if category in T.CATEGORY_ORDER else "theme",
-           "description": str(spec.get("description") or "").strip(), "problem": None, "same_as": None}
+           "description": str(spec.get("description") or "").strip(), "problem": None, "same_as": None,
+           "raw_parents": _strs(spec.get("parents") or spec.get("parent")), "raw_anti": _strs(spec.get("anti")),
+           "parents": [], "anti": [], "unknown": []}
     if not tid or not names:
         out["problem"] = "it has no id or name"
     elif T.is_known(tid):
         out["same_as"] = tid  # there's a shared tag with that id already: labels can just use it
     else:
+        parents = {i for p in out["raw_parents"] for i in T.canonical(p) if T.is_known(i)}
         for name in names.values():
             others = [t for t in T.canonical(name) if T.is_known(t)]
-            if others:
-                out["same_as"] = others[0]  # it's an existing tag under another id
+            own = [t for t in others if T.key(name) in {T.key(n) for n in (t, *T.own_names(t))}]
+            # an existing tag under another id, unless the name is just an alias of the new tag's parent
+            # ("ГГ монстр" was an alias of Non-human lead, and becomes its own child tag)
+            if own or (others and not set(others) <= parents):
+                out["same_as"] = (own or others)[0]
                 break
     return out
+
+
+def _strs(value) -> list[str]:
+    """An answer's list of tags (or one tag as a string), as clean strings."""
+    value = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [s for s in (str(x).strip() for x in value) if s]
+
+
+def _one_tag(x: str, new: dict) -> str | None:
+    """One shared tag (or a usable new one) for a parent or anti-tag in an answer, or None."""
+    ids = _target(x, new)
+    return ids[0] if ids and len(ids) == 1 and (T.is_known(ids[0]) or ids[0] in new) else None
+
+
+def _broader(tag_id: str, new: dict) -> set[str]:
+    """Every tag above this one, the new tags' parents included."""
+    seen, todo = set(), [tag_id]
+    while todo:
+        t = todo.pop()
+        for p in (new[t]["parents"] if t in new else T.parents(t)):
+            if p not in seen:
+                seen.add(p)
+                todo.append(p)
+    return seen
+
+
+def _new_tag_links(new: dict) -> None:
+    """Work out the parents and anti-tags of the new tags an answer proposed (only shared or new tags; no loops)."""
+    for tid, t in new.items():
+        if t["problem"] or t["same_as"]:
+            continue
+        for field, raw in (("parents", t["raw_parents"]), ("anti", t["raw_anti"])):
+            for x in raw:
+                found = _one_tag(x, new)
+                if not found or found == tid:
+                    t["unknown"].append(x)
+                elif found not in t[field] and not (field == "parents" and tid in _broader(found, new)):
+                    t[field].append(found)
+    for tid, t in new.items():  # an anti-tag can't be in the same family
+        family = _broader(tid, new)
+        t["anti"] = [a for a in t["anti"] if a not in family and tid not in _broader(a, new)]
 
 
 def _target(x: str, new: dict) -> list[str] | None:
@@ -411,6 +485,24 @@ def _target(x: str, new: dict) -> list[str] | None:
     return ids if ids and all(T.is_known(i) for i in ids) else None
 
 
+def _new_tag_out(t: dict, new: dict, **extra) -> dict:
+    """A proposed new tag for the preview: its parents and anti-tags with their names."""
+    def brief(i):
+        return {"id": i, "label": (new[i].get("label") or new[i].get("label_ru")) if i in new else T.info(i)["label"]}
+    out = {k: v for k, v in t.items() if not k.startswith("raw_")}
+    return {**out, "parents": [brief(i) for i in t["parents"]], "anti": [brief(i) for i in t["anti"]], **extra}
+
+
+def new_tag_entry(t: dict) -> dict:
+    """What my_tags.toml keeps of a new tag."""
+    return {k: t[k] for k in ("id", "label", "label_ru", "label_uk", "category", "description") if t.get(k)}
+
+
+def new_tag_links(t: dict) -> list[tuple]:
+    ids = lambda xs: [x["id"] if isinstance(x, dict) else x for x in xs]  # noqa: E731
+    return [("parent", t["id"], p, True) for p in ids(t["parents"])] + [("anti", t["id"], a, True) for a in ids(t["anti"])]
+
+
 def check_import(text: str) -> dict:
     """What an AI's reply would do, label by label, before anything changes."""
     c = db.conn()
@@ -422,6 +514,7 @@ def check_import(text: str) -> dict:
         if isinstance(o.get("new_tag"), dict):
             t = _new_tag(o["new_tag"])
             new[t["id"]] = t
+    _new_tag_links(new)
     index = _unknown_index(c)
     fixed = {T.key(name) for name in T.fixes()}
     new_names = {t["id"]: t.get("label") or t.get("label_ru") for t in new.values()}
@@ -466,7 +559,7 @@ def check_import(text: str) -> dict:
         if it["action"] == "tags":
             it["tags"] = [{"id": i, "label": new_names.get(i) or T.info(i)["label"]} for i in it["ids"]]
     used = {i for it in items for i in it["ids"]}
-    new_tags = [{**t, "used_by": sum(1 for it in items if t["id"] in it["ids"])} for t in new.values()
+    new_tags = [_new_tag_out(t, new, used_by=sum(1 for it in items if t["id"] in it["ids"])) for t in new.values()
                 if not t["same_as"]]
     counts = {a: sum(1 for it in items if it["action"] == a and not it["problem"]) for a in ("tags", "hide", "keep")}
     counts["problems"] = sum(1 for it in items if it["problem"])
@@ -489,13 +582,14 @@ def apply_import(text: str, keys=None, new_ids=None) -> dict:
             continue
         entries.append((it["label"], ids))
     used = {i for _, ids in entries for i in ids}
-    make = [{k: t[k] for k in ("id", "label", "label_ru", "label_uk", "category", "description") if t.get(k)}
-            for t in make if t["id"] in used]
+    make = [t for t in make if t["id"] in used]
+    made = {t["id"] for t in make}
+    links = [x for t in make for x in new_tag_links(t) if T.is_known(x[2]) or x[2] in made]
     if not entries:
         raise ValueError("Nothing to apply: tick at least one answer.")
-    result = apply_many(entries, make)
+    result = apply_many(entries, [new_tag_entry(t) for t in make], links)
     record = {"id": now().replace(":", "").replace("-", ""), "at": now(), "labels": result["previous"],
-              "new_tags": [t["id"] for t in make], "count": result["labels"], "books": result["books"]}
+              "links": result["links"], "new_tags": sorted(made), "count": result["labels"], "books": result["books"]}
     db.set_setting("label_imports", [record, *db.get_setting("label_imports", [])][:30])
     return {**result, "import": record["id"], "new_tags": len(make)}
 
@@ -513,7 +607,8 @@ def undo_import(import_id: str) -> dict:
     rec = next((r for r in records if r.get("id") == import_id), None)
     if not rec or rec.get("undone"):
         raise ValueError("That import is already undone.")
-    result = apply_many(list(rec["labels"].items()))
+    result = apply_many(list(rec["labels"].items()),
+                        links=[(k, a, b, not on) for k, a, b, on in reversed(rec.get("links") or [])])
     still_used = {i for ids in T.fixes().values() for i in ids}
     for tid in rec.get("new_tags", []):
         if tid not in still_used and tid in (T.user_config().get("tags") or {}):

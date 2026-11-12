@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import (__version__, accounts, browser, config, db, diagnostics, export, handoff, labels, library, search,
-               tagedit)
+               tagai, tagedit)
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -176,6 +176,49 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
             return labels.undo_import(str(body.get("id") or ""))
         except ValueError as e:
             raise HTTPException(400, str(e))
+
+    # Improving shared tags with an AI chat: aliases to child tags, links (see tagai.py).
+    @app.get("/api/tagai/export")
+    def tagai_export(q: str = "", cat: str = "", reviewed: int = 0, limit: int = 600):
+        return tagai.export(q[:500], cat, bool(reviewed), max(1, min(limit, 5000)))
+
+    @app.get("/api/tagai/export.txt")
+    def tagai_export_file(q: str = "", cat: str = "", reviewed: int = 0, limit: int = 600):
+        r = tagai.export(q[:500], cat, bool(reviewed), max(1, min(limit, 5000)))
+        return Response(r["text"], media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="bookkeeper-tags-{r["tags"]}.txt"'})
+
+    @app.post("/api/tagai/check")
+    def tagai_check(body: dict = Body(...)):
+        try:
+            return tagai.check(str(body.get("text") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/tagai/apply")
+    def tagai_apply(body: dict = Body(...)):
+        keys, new_tags = body.get("keys"), body.get("new_tags")
+        try:
+            return tagai.apply(str(body.get("text") or ""), None if keys is None else set(map(str, keys)),
+                               None if new_tags is None else set(map(str, new_tags)))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/tagai/imports")
+    def tagai_imports():
+        return tagai.imports()
+
+    @app.post("/api/tagai/undo")
+    def tagai_undo(body: dict = Body(...)):
+        try:
+            return tagai.undo(str(body.get("id") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/tagai/forget")
+    def tagai_forget():
+        tagai.forget_reviewed()
+        return {"ok": True}
 
     @app.post("/api/labels/fix")
     def label_fix(body: dict = Body(...)):

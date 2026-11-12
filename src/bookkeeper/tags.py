@@ -811,8 +811,19 @@ def _rewrite_table(text: str, path: tuple, contents: dict | None) -> str:
     tail = end
     while end < len(lines) and tail > top and lines[tail - 1].lstrip().startswith("#"):
         tail -= 1  # comments right above the next table belong to it
-    if contents is None:
-        return "".join(lines[:start] + lines[tail:])
+    if contents is None or (not contents and path in TABLE_NOTES):  # a table Bookkeeper added, now empty: drop it
+        note = TABLE_NOTES.get(path, "").splitlines(keepends=True)
+        head = start - len(note) if note and lines[max(0, start - len(note)):start] == note else start
+        while head > 0 and lines[head - 1].strip() == "" and (tail >= len(lines) or lines[tail].strip() == ""):
+            head -= 1  # the blank line that separated it
+        return "".join(lines[:head] + lines[tail:])
+    old = lines[top:tail]
+    last = max((i for i, line in enumerate(old) if line.strip() and not line.lstrip().startswith("#")), default=-1)
+    kept = old[last + 1:]  # commented-out examples after the values stay
+    if any(line.lstrip().startswith("#") for line in kept):
+        while kept and not kept[0].strip():
+            kept = kept[1:]
+        return "".join(lines[:top]) + body + "\n" + "".join(kept) + "".join(lines[tail:])
     return "".join(lines[:top]) + body + ("\n" if end < len(lines) else "") + "".join(lines[tail:])
 
 
