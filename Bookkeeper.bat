@@ -4,6 +4,7 @@ title Bookkeeper
 cd /d "%~dp0"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
+set "PYTHONUNBUFFERED=1"
 chcp 65001 >nul
 
 rem Bookkeeper runs on Python. On the first start this downloads "uv", a small tool that installs
@@ -25,6 +26,7 @@ del "%TOOLS%\uv.zip"
 if not exist "%UV%" goto failed
 
 :run
+echo  Starting Bookkeeper. If nothing changes for a long time, press Esc once in this window.
 "%UV%" run --frozen --python 3.12 bookkeeper %*
 if errorlevel 1 goto crashed
 exit /b 0
