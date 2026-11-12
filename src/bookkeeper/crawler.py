@@ -134,6 +134,8 @@ class SiteWorker(threading.Thread):
         settings = site_settings(self.site_id)
         self._status("running")
         did = self._discovery_step(settings)
+        if self.cls.listing_first and not self.state.get("full_done"):
+            return did  # the first full listing of a huge, slow site comes before details and narration checks
         did = self._details_step(settings) or did
         if settings["analyze"] and self.cls.has_text:
             did = self._analysis_step(settings) or did
@@ -257,28 +259,32 @@ class SiteWorker(threading.Thread):
                 if age_h < settings["pass_interval_hours"]:
                     return False
             self.gen = self.site.discover(self.state)
-        self.activity = "reading the catalog"
-        try:
-            batch = next(self.gen)
-        except StopIteration:
-            self.gen = None
-            self.state["last_pass_end"] = time.time()
-            self.state["passes"] = self.state.get("passes", 0) + 1
+        deadline = time.time() + 20
+        while True:  # batches read from a downloaded file come several at a time; pages from the site one
+            self.activity = self.site.discover_activity or "reading the catalog"
+            try:
+                batch = next(self.gen)
+            except StopIteration:
+                self.gen = None
+                self.state["last_pass_end"] = time.time()
+                self.state["passes"] = self.state.get("passes", 0) + 1
+                self._save_state()
+                self.manager.dirty.add(self.site_id)
+                return True
+            for info in batch:
+                if info.adult and not settings["include_adult"]:
+                    continue
+                library.upsert_book(self.site_id, info)
             self._save_state()
             self.manager.dirty.add(self.site_id)
-            return True
-        for info in batch:
-            if info.adult and not settings["include_adult"]:
-                continue
-            library.upsert_book(self.site_id, info)
-        self._save_state()
-        self.manager.dirty.add(self.site_id)
-        return True
+            if not self.site.batch_offline or time.time() > deadline or self.stop.is_set():
+                return True
 
     def _details_step(self, settings) -> bool:
         rows = db.conn().execute(
             "SELECT id, sid, extra FROM books WHERE site=? AND meta_at IS NULL "
-            "ORDER BY pop_raw DESC NULLS LAST, id LIMIT ?", (self.site_id, settings["details_per_cycle"])).fetchall()
+            f"ORDER BY pop_raw DESC NULLS LAST, id {'DESC' if self.cls.newest_first else ''} LIMIT ?",
+            (self.site_id, settings["details_per_cycle"])).fetchall()
         if not rows:
             return False
         for r in rows:
@@ -336,7 +342,8 @@ class SiteWorker(threading.Thread):
             return False
         rows = db.conn().execute(
             "SELECT id, sid, title, extra FROM books WHERE site=? AND meta_at IS NOT NULL AND analyzed_at IS NULL "
-            "AND (adult=0 OR ?) ORDER BY (pov_source='site') ASC, pop_raw DESC NULLS LAST, id LIMIT ?",
+            "AND (adult=0 OR ?) ORDER BY (pov_source='site') ASC, pop_raw DESC NULLS LAST, "
+            f"id {'DESC' if self.cls.newest_first else ''} LIMIT ?",
             (self.site_id, int(settings["include_adult"]), settings["analysis_per_cycle"])).fetchall()
         if not rows:  # retry books that hit a temporary problem, after a while, at most 3 times
             rows = db.conn().execute(
@@ -412,6 +419,7 @@ class Manager:
             c.execute("INSERT OR IGNORE INTO sites(id, enabled, updated_at) VALUES(?, 0, ?)", (site_id, now()))
         self._adult_rescan_once()
         self._age_ratings_once()
+        self._state_versions()
         for site_id in SITES:
             # A block from last time may be over: try again on start.
             c.execute("UPDATE sites SET status='idle' WHERE id=? AND status IN ('running','blocked','error')",
@@ -442,6 +450,19 @@ class Manager:
                 c.execute("UPDATE sites SET state=? WHERE id=?",
                           (jdump({k: v for k, v in state.items() if k == "passes"}), site_id))
         db.set_setting("adult_rescan_done", True)
+
+    def _state_versions(self):
+        """A connector that now walks its site differently (Flibusta in 0.4.4) starts its listing again, once."""
+        c = db.conn()
+        for site_id, cls in SITES.items():
+            if not cls.state_version:
+                continue
+            row = c.execute("SELECT state FROM sites WHERE id=?", (site_id,)).fetchone()
+            state = jload(row["state"], {}) if row else {}
+            if state.get("state_version", 0) != cls.state_version:
+                fresh = {k: v for k, v in state.items() if k == "passes"}
+                c.execute("UPDATE sites SET state=? WHERE id=?",
+                          (jdump({**fresh, "state_version": cls.state_version}), site_id))
 
     def _age_ratings_once(self):
         """Age ratings arrived in 0.4. Ficbook's were already kept with each work, so they are filled in now; sites

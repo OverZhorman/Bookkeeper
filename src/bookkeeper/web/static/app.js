@@ -138,7 +138,8 @@ function toggleIn(key, value) {
 let lastLibraryQuery = null;
 async function route() {
   const { view, params } = parseHash();
-  document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  const tab = ["tag", "tags", "labels"].includes(view) ? "tags" : view;  // tag pages and label fixing live under Tags
+  document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === tab));
   clearInterval(pollTimer);
   if (view === "library") {
     filters = readFilters(params);
@@ -1029,10 +1030,17 @@ function renderHelp() {
       h("div", { class: "help-card" }, h("h2", {}, "Fanfiction, orientation and age rating"),
         h("p", {}, "These filters work like Ficbook's. ", h("b", {}, "Orientation"), " uses the tags Het, Slash, Femslash, Gen, Mixed and Other (from Ficbook and other sites). ", h("b", {}, "Age rating"),
           " uses the site's own rating as G / PG-13 / R / NC-17 / NC-21 (16+ counts as R, 18+ as NC-17, 21+ as NC-21); books marked 18+ without a rating count as NC-17.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Editing tags"),
+        h("p", {}, "Open ", h("a", { href: "#/tags" }, "Tags"), " in the top bar, click a tag, then ", h("b", {}, "✎ Edit tag"),
+          ". There you can change its names in the three languages, its category and description, add or remove aliases, parent tags, child tags and anti-tags. Every change is saved at once and applies to every book; ",
+          h("b", {}, "Undo all my changes"), " puts one of Bookkeeper's own tags back."),
+        h("p", {}, h("b", {}, "+ New tag"), " on the Tags page makes a tag of your own; on an unrecognized label's page, ", h("b", {}, "Make it a shared tag"),
+          " turns that label into one. Your changes are saved in ", h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), ".")),
       h("div", { class: "help-card" }, h("h2", {}, "Fixing site labels"),
         h("p", {}, "Sites write tags their own way, and some labels aren't one of Bookkeeper's shared tags (Wattpad hashtags, character names, series names). ",
           h("a", { href: "#/labels" }, "Fix site labels"), " lists them, most common first, with suggestions. Say once what a label means and every book with it follows, including books that arrive later. ",
-          h("b", {}, "Hide"), " removes junk labels; ", h("b", {}, "Undo"), " brings anything back."),
+          h("b", {}, "Hide"), " removes junk labels; ", h("b", {}, "Leave as is"), " takes a label off the list; ", h("b", {}, "Undo"), " brings anything back."),
+        h("p", {}, h("b", {}, "✨ Fix with an AI chat"), " lets Gemini, ChatGPT or another chat do the reading, a batch at a time, on your own subscription: copy the request, paste it into the chat, paste the reply back, check it and apply it. A whole import can be undone."),
         h("p", {}, "When Bookkeeper maps a label to the wrong tag, press ✎ next to it under “Written on the sites as” on the tag's page. Fixes are saved in the [fixes] table of ",
           h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), ".")),
       h("div", { class: "help-card" }, h("h2", {}, "Your own tag rules"),
@@ -1052,7 +1060,7 @@ function renderHelp() {
         h("p", {}, "18+ and 21+ books are collected like any other. To keep them out of sight, tick ", h("b", {}, "Hide 18+ books"), " in the library filters (under More). Some sites only show them to logged-in readers.")))));
 }
 
-/// ---------- tag hover cards ----------
+// ---------- tag hover cards ----------
 const tagCache = new Map();
 function tagBrief(id) {
   if (!tagCache.has(id)) tagCache.set(id, api.get(`/api/tag?id=${encodeURIComponent(id)}`).catch(() => null));
@@ -1123,9 +1131,35 @@ function treeList(nodes, prefix = "") {
   }));
 }
 
+// Names, category and description of a tag (editing one, or making a new one).
+function tagForm(v, opts = {}) {
+  const b = opts.builtin || {};
+  const field = (caption, el, hint) => h("label", { class: "field" }, h("span", {}, caption, hint ? h("span", { class: "faint" }, ` ${hint}`) : null), el);
+  const input = (k, ph) => { const el = h("input", { class: "input", placeholder: b[k] || ph }); el.value = v[k] || ""; return el; };
+  const en = input("label", "English name"), ru = input("label_ru", "Русское название"), uk = input("label_uk", "Українська назва");
+  const cats = (meta.categories || Object.keys(CATS)).filter((c) => c !== "other" || v.category === "other");
+  const cat = h("select", { class: "input" }, cats.map((c) => h("option", { value: c, selected: c === (v.category || "theme") }, CATS[c] || c)));
+  const desc = h("textarea", { class: "note", placeholder: b.description || "What the tag means, in a sentence or two" });
+  desc.value = v.description || "";
+  const status = h("span", { class: "faint" });
+  const save = async () => {
+    fill(status, h("span", { class: "spinner tiny" }), " Saving…");
+    const ok = await opts.onSave({ label: en.value, label_ru: ru.value, label_uk: uk.value, category: cat.value, description: desc.value });
+    if (!ok) fill(status);
+  };
+  return h("div", { class: "tagform" },
+    h("div", { class: "row3" }, field("English", en), field("Русский", ru), field("Українська", uk)),
+    field("Category", cat),
+    field("Description", desc, opts.builtin ? "(leave a field empty for Bookkeeper's own)" : ""),
+    h("div", { class: "shelf" }, h("button", { class: "btn small primary", onclick: save }, opts.saveText || "Save"), opts.extra || null, status));
+}
+
 async function renderTag(id) {
   const app = $("#app");
-  app.replaceChildren(h("div", { class: "page" }, h("div", { class: "loadmore" }, h("span", { class: "spinner" }))));
+  const editing = parseHash().params.edit === "1";
+  const keepScroll = renderTag.keepScroll;
+  renderTag.keepScroll = null;
+  if (keepScroll == null) app.replaceChildren(h("div", { class: "page" }, h("div", { class: "loadmore" }, h("span", { class: "spinner" }))));
   let t;
   try { t = await api.get(`/api/tag?id=${encodeURIComponent(id)}&full=1`); }
   catch (e) { app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "Couldn't open this tag"), h("p", {}, String(e.message || e)))); return; }
@@ -1134,9 +1168,46 @@ async function renderTag(id) {
   const key = t.category === "fandom" ? "fq" : "tq";
   const show = (q) => { location.hash = "#/library?" + toQuery({ [key]: q }); };
   const sec = (title, sub, body) => h("section", { class: "tsec" }, h("h2", {}, title, sub ? h("span", { class: "sub" }, ` — ${sub}`) : null), body);
-  app.replaceChildren(h("div", { class: "page tagpage" },
+  // Every change is saved at once; then the page shows the tag again, where you were.
+  const redo = async (fn, done) => {
+    try { await fn(); } catch (e) { toast(String(e.message || e)); return false; }
+    tagCache.clear();
+    if (done) toast(done);
+    renderTag.keepScroll = scrollY;
+    await renderTag(id);
+    return true;
+  };
+  const link = (kind, other, on) => redo(() => api.post("/api/tag/link", { id: t.id, kind, other, on }));
+  const linkEditor = (items, kind, placeholder) => h("div", {},
+    items.length ? h("div", { class: "chips" }, items.map((x) => h("span", { class: "chip static" }, tagLink(x),
+      h("button", { class: "edit", title: "Remove this link", onclick: () => link(kind, x.id, false) }, "×"))))
+      : h("p", { class: "faint" }, "—"),
+    h("div", { class: "addrow" }, tagPicker((o) => link(kind, o.id, true), placeholder)));
+  const aliasInput = h("input", { class: "input small", placeholder: "+ another name, as a site writes it…" });
+  const addAlias = () => {
+    const text = aliasInput.value.trim();
+    if (text) redo(() => api.post("/api/tag/alias", { id: t.id, alias: text, on: true }), `“${text}” now means ${name}, for every book`);
+  };
+  aliasInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addAlias(); } });
+
+  const shareForm = h("div", {});
+  const makeShared = () => shareForm.replaceChildren(h("div", { class: "editbox" },
+    h("p", { class: "faint", style: { margin: "0 0 8px" } }, `“${t.label}” becomes a shared tag: give it names in the other languages, a category and a description. Its books keep it, and other spellings of it join it.`),
+    tagForm({ [/[а-яёіїєґ]/i.test(t.label) ? "label_ru" : "label"]: t.label, category: "theme" }, {
+      saveText: "Make it a shared tag",
+      onSave: async (v) => {
+        try { await api.post("/api/tag/new", { ...v, from_label: t.label }); } catch (e) { toast(String(e.message || e)); return false; }
+        tagCache.clear();
+        toast(`“${t.label}” is a shared tag now`);
+        location.hash = tagHref(t.id) + "&edit=1";
+        return true;
+      } })));
+
+  const view = [
     h("div", { class: "crumbs" }, h("a", { href: "#/tags" }, "All tags"), " › ", CATS[t.category] || t.category || ""),
-    h("h1", {}, name),
+    h("div", { class: "titlerow" }, h("h1", {}, name),
+      t.editable ? h("a", { class: `btn small ${editing ? "primary" : ""}`, href: tagHref(t.id) + (editing ? "" : "&edit=1"),
+        title: editing ? "Back to reading" : "Change its names, description, aliases, parent and child tags, anti-tags" }, editing ? "✓ Done editing" : "✎ Edit tag") : null),
     h("div", { class: "names" }, [["English", t.label], ["Русский", t.label_ru], ["Українська", t.label_uk]].filter(([, v]) => v).map(([k, v]) =>
       h("span", {}, h("span", { class: "faint" }, `${k}: `), v))),
     t.description ? h("p", { class: "lead" }, t.description)
@@ -1148,27 +1219,61 @@ async function renderTag(id) {
       h("button", { class: "btn", onclick: () => show("-" + qtok(t.id)) }, "Show books without it"),
       t.possible ? h("button", { class: "btn", title: "Books with the tag, plus books that possibly have it", onclick: () => show("?" + qtok(t.id)) }, "Include possible ones") : null,
       h("button", { class: "btn ghost", title: "Add it to the search you already have in the library", onclick: () => addToQuery(t, "") }, "Add to my search")),
-    t.fixable || t.fix ? h("section", { class: "tsec fixbox" }, h("h2", {}, t.fix ? "Fixed label" : "Fix this label",
+  ];
+  if (t.fixable || t.fix) {
+    view.push(h("section", { class: "tsec fixbox" }, h("h2", {}, t.fix ? "Fixed label" : "Fix this label",
       h("span", { class: "sub" }, " — what it means, for every book with it")),
       fixerFor({ label: t.fix ? t.fix.label : t.label, id: t.id, books: t.books, fix: t.fix }),
-      h("div", { class: "faint", style: { fontSize: "12px", marginTop: "6px" } }, h("a", { href: "#/labels" }, "All labels to fix, most common first →"))) : null,
-    t.fixes_here.length ? sec("Your label fixes", `site labels you said mean “${name}”`, h("div", { class: "lrows" },
-      t.fixes_here.map((f) => labelRow({ label: f.label, books: null, fix: { tags: f.tags, hidden: false, separate: false } }))))
-      : null,
-    sec("Aliases", "other names that mean the same", numbered(t.aliases, (a) => a, "cols")),
-    sec("Parent tags", `broader tags every “${name}” book also gets`, numbered(t.parents, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
-    t.ancestors.length ? h("div", { class: "further" }, "Further up: ", t.ancestors.map((x, i) => [i ? ", " : "", tagLink(x)])) : null,
-    sec("Child tags", `narrower tags that can't appear without “${name}”`, t.children_tree.length ? treeList(t.children_tree) : h("p", { class: "faint" }, "—")),
+      t.fixable ? h("div", { class: "faint", style: { fontSize: "12.5px", marginTop: "8px" } }, "Means none of the shared tags? ",
+        h("button", { class: "btn small", onclick: makeShared }, "Make it a shared tag"), " · ", h("a", { href: "#/labels" }, "all labels to fix →")) : null,
+      shareForm));
+  }
+  if (editing && t.editable) {
+    view.push(h("section", { class: "tsec editbox" }, h("h2", {}, "Names and description"),
+      tagForm(t.values, {
+        builtin: Object.keys(t.builtin || {}).length ? t.builtin : null,
+        onSave: (v) => redo(() => api.post("/api/tag/edit", { id: t.id, ...v }), "Saved"),
+        extra: [
+          t.edited ? h("button", { class: "btn small ghost", title: "Names, description, parent and child links and anti-tags go back to Bookkeeper's own (label fixes stay)",
+            onclick: () => confirm(`Undo all your changes to “${name}”?`) && redo(() => api.post("/api/tag/reset", { id: t.id }), "Back to Bookkeeper's version") }, "Undo all my changes") : null,
+          t.user_tag ? h("button", { class: "btn small ghost danger",
+            onclick: () => confirm(`Delete the tag “${name}”? Its books keep their site labels.`) && redo(() => api.post("/api/tag/delete", { id: t.id }), "Tag deleted") }, "Delete tag") : null,
+        ] })));
+  }
+  if (t.fixes_here.length) {
+    view.push(sec("Your label fixes", `site labels you said mean “${name}”`, h("div", { class: "lrows" },
+      t.fixes_here.map((f) => labelRow({ label: f.label, books: null, fix: { tags: f.tags, hidden: false, separate: false } })))));
+  }
+  if (editing && t.editable) {
+    view.push(
+      sec("Aliases", "other names that mean the same: a label written this way gives every book this tag", h("div", {},
+        t.aliases.length ? h("div", { class: "chips" }, t.aliases.map((a) => h("span", { class: "chip static" }, a,
+          h("button", { class: "edit", title: `Remove: “${a}” won't mean ${name} any more`, onclick: () => redo(() => api.post("/api/tag/alias", { id: t.id, alias: a, on: false }), `“${a}” doesn't mean ${name} any more`) }, "×"))))
+          : h("p", { class: "faint" }, "—"),
+        h("div", { class: "addrow" }, aliasInput, h("button", { class: "btn small", onclick: addAlias }, "Add")))),
+      sec("Parent tags", `broader tags every “${name}” book also gets`, linkEditor(t.parents_all, "parent", "+ add a broader tag…")),
+      sec("Child tags", `narrower tags that can't appear without “${name}”`, linkEditor(t.children_direct, "child", "+ add a narrower tag…")),
+      sec("Anti-tags", `tags that contradict “${name}”`, linkEditor(t.anti, "anti", "+ add a contradicting tag…")));
+  } else {
+    view.push(
+      sec("Aliases", "other names that mean the same", numbered(t.aliases, (a) => a, "cols")),
+      sec("Parent tags", `broader tags every “${name}” book also gets`, numbered(t.parents, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
+      t.ancestors.length ? h("div", { class: "further" }, "Further up: ", t.ancestors.map((x, i) => [i ? ", " : "", tagLink(x)])) : null,
+      sec("Child tags", `narrower tags that can't appear without “${name}”`, t.children_tree.length ? treeList(t.children_tree) : h("p", { class: "faint" }, "—")),
+      sec("Anti-tags", `tags that contradict “${name}”`, numbered(t.anti, (x) => h("span", {}, tagLink(x), countOf(x.books)))));
+  }
+  view.push(
     sec("Related tags", `tags that usually appear with “${name}” in your library`,
       numbered(t.related, (x) => h("span", {}, tagLink(x), h("span", { class: "n" }, `in ${x.share}% of these books`)))),
-    sec("Anti-tags", `tags that contradict “${name}”`, numbered(t.anti, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
     t.rarely.length ? sec("Rarely together", `common tags that almost never appear with “${name}” in your library`,
       numbered(t.rarely, (x) => h("span", {}, tagLink(x), h("span", { class: "n" }, `${fmtNum(x.together)} book${x.together === 1 ? "" : "s"} with both`)))) : null,
     t.combined.length ? sec("Combined labels", `site labels that mean “${name}” plus another tag`, h("div", { class: "chips" }, t.combined.map((x) =>
       h("span", { class: "chip static" }, x.label, h("span", { class: "n" }, "= " + [name, ...x.with.map(tagLabel)].join(" + ")))))) : null,
     t.seen_as.length ? sec("Written on the sites as", "✎ when a label doesn't really mean this tag", seenAs(t)) : null,
     t.sites.length ? sec("On the sites", null, h("div", { class: "chips" }, t.sites.map((s) =>
-      h("span", { class: "chip static" }, siteName(s.site), countOf(s.books))))) : null));
+      h("span", { class: "chip static" }, siteName(s.site), countOf(s.books))))) : null);
+  fill(app, h("div", { class: `page tagpage ${editing ? "editing" : ""}` }, view));
+  if (keepScroll != null) scrollTo(0, keepScroll);
 }
 
 // The site labels behind a tag; ✎ opens a fixer for one of them (when Bookkeeper maps it to the wrong tag).
@@ -1194,6 +1299,7 @@ async function renderAllTags() {
   if (parseHash().view !== "tags") return;
   const filter = h("input", { class: "input", placeholder: "Find a tag: type part of a name in any language…", style: { maxWidth: "420px" } });
   const body = h("div", {});
+  const newForm = h("div", {});
   const draw = () => {
     const q = filter.value.trim().toLowerCase().replace(/ё/g, "е");
     const by = {};
@@ -1204,16 +1310,32 @@ async function renderAllTags() {
     }
     const order = meta.categories || Object.keys(CATS);
     const sections = order.filter((c) => by[c]).map((c) => h("section", { class: "tsec" },
-      h("h2", {}, CATS[c] || c, h("span", { class: "sub" }, ` — ${by[c].length}`)),
+      h("h2", {}, CATS[c] || c, h("span", { class: "sub" }, ` — ${by[c].length}`),
+        c === "other" ? h("a", { class: "btn small", href: "#/labels", style: { marginLeft: "10px" } }, "Fix these labels →") : null),
       h("div", { class: "chips" }, by[c].sort((a, b) => (b.books || 0) - (a.books || 0) || tagLabel(a).localeCompare(tagLabel(b))).map((t) =>
         withHover(h("a", { class: `chip ${t.books ? "" : "empty"}`, href: tagHref(t.id) }, tagLabel(t), countOf(t.books)), t.id)))));
     body.replaceChildren(...(sections.length ? sections : [h("p", { class: "muted" }, "No tag matches that.")]));
   };
   filter.addEventListener("input", debounce(draw, 120));
-  app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "All tags"),
-    h("p", { class: "lead" }, "Bookkeeper's shared tags, grouped like on the book page, with the number of books in your library that have each. Rest the mouse on a tag for a short description; click it for its aliases, parent and child tags, related tags and anti-tags."),
-    h("div", { class: "callout" }, "Labels from the sites that aren't shared tags are listed under “Other tags” at the bottom. ",
-      h("a", { class: "btn small primary", href: "#/labels" }, "Fix the most common ones →")),
+  const openNew = () => newForm.replaceChildren(h("div", { class: "editbox", style: { marginBottom: "14px" } },
+    h("h2", { style: { fontSize: "16px", margin: "0 0 8px" } }, "New tag"),
+    tagForm({ category: "theme" }, {
+      saveText: "Create the tag",
+      extra: h("button", { class: "btn small ghost", onclick: () => newForm.replaceChildren() }, "Cancel"),
+      onSave: async (v) => {
+        let r;
+        try { r = await api.post("/api/tag/new", v); } catch (e) { toast(String(e.message || e)); return false; }
+        toast("Tag created");
+        location.hash = tagHref(r.id) + "&edit=1";
+        return true;
+      } })));
+  app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "Tags"),
+    h("p", { class: "lead" }, "Bookkeeper's shared tags, grouped like on the book page, with the number of books in your library that have each. Rest the mouse on a tag for a short description; click it for its page, where ✎ Edit tag changes its names, description, aliases, parent and child tags and anti-tags."),
+    h("div", { class: "toolbar2" },
+      h("button", { class: "btn primary", onclick: openNew }, "+ New tag"),
+      h("a", { class: "btn", href: "#/labels", title: "Labels from the sites that aren't shared tags, most common first" }, "Fix site labels"),
+      h("a", { class: "btn", href: "#/labels?tab=mine" }, "My label fixes")),
+    newForm,
     h("div", { style: { margin: "0 0 6px" } }, filter),
     h("div", { class: "legend", style: { marginBottom: "6px" } }, h("span", {}, "Faded: no book has it yet"), h("span", {}, "Tag names in: "),
       ...[["en", "English"], ["ru", "Русский"], ["uk", "Українська"]].map(([k, l]) => chip(l, tagLang === k, () => { tagLang = k; store.set("tagLang", k); renderAllTags(); }))),
@@ -1221,7 +1343,7 @@ async function renderAllTags() {
   draw();
 }
 
-/// ---------- fixing site labels ----------
+// ---------- fixing site labels ----------
 // A small "type a tag" field: suggestions as you type, Enter or a click picks one.
 function tagPicker(onPick, placeholder = "Means… type a tag") {
   const input = h("input", { class: "input small", placeholder, autocomplete: "off", spellcheck: "false" });
@@ -1283,7 +1405,7 @@ function labelFixer(item, opts = {}) {
     fill(note, done ? h("span", { class: "faint" }, done) : null);
     const parts = [];
     if (fix && !adding) {
-      parts.push(h("span", { class: "fixed" }, "✓ ", fix.hidden ? "Hidden from books" : fix.separate ? "Kept as a tag of its own"
+      parts.push(h("span", { class: "fixed" }, "✓ ", fix.hidden ? "Hidden from books" : fix.separate ? "Left as it is (a tag of its own)"
         : ["Means ", fix.tags.map((t, i) => [i ? " + " : "", tagLink(t)])]));
       if (!fix.hidden && !fix.separate) {
         parts.push(h("button", { class: "btn small ghost", title: "It means another tag as well", onclick: () => { adding = true; draw(); } }, "+ another tag"));
@@ -1305,6 +1427,9 @@ function labelFixer(item, opts = {}) {
         parts.push(h("button", { class: "btn small ghost", title: "Bookkeeper maps this label to the wrong tag: keep it as a tag of its own", onclick: () => send({ separate: true }, "Fixing") }, "Keep separate"));
       }
       parts.push(h("button", { class: "btn small ghost", title: "Not a real tag (a site name, a year, a typo…): remove it from every book. You can undo it later.", onclick: () => send({ hide: true }, "Hiding") }, "Hide"));
+      if (!opts.remap) {
+        parts.push(h("button", { class: "btn small ghost", title: "It's fine as it is: keep it as a tag of its own, and take it off the list of labels to fix", onclick: () => send({ separate: true }, "Saving") }, "Leave as is"));
+      }
     }
     fill(box, parts, note);
   };
@@ -1337,6 +1462,106 @@ function labelRow(x, n) {
   return row;
 }
 
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch { /* not allowed here: the old way */ }
+  const ta = h("textarea", { style: { position: "fixed", left: "-9999px" } });
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  document.execCommand("copy");
+  ta.remove();
+}
+
+// Fixing labels with an AI chat (Gemini, ChatGPT…): copy a batch of labels as a prompt, paste the reply back.
+function aiPanel(getFilters, onApplied) {
+  const limit = h("select", { class: "input", style: { width: "auto" } },
+    [100, 250, 500, 1000].map((n) => h("option", { value: n, selected: n === 250 }, `${n} labels`)));
+  const info = h("span", { class: "faint" });
+  const copy = async () => {
+    fill(info, h("span", { class: "spinner tiny" }), " Preparing…");
+    try {
+      const { site, q } = getFilters();
+      const r = await api.get("/api/labels/export?" + toQuery({ site, q, limit: limit.value }));
+      await copyText(r.text);
+      fill(info, `Copied ${r.count} of ${fmtNum(r.total)} labels (${fmtNum(r.chars)} characters).`);
+      toast("Copied: paste it into the AI chat");
+    } catch (e) { fill(info, h("span", { class: "warn" }, String(e.message || e))); }
+  };
+  const download = () => {
+    const { site, q } = getFilters();
+    location.href = "/api/labels/export.txt?" + toQuery({ site, q, limit: limit.value });
+  };
+  const reply = h("textarea", { class: "note", placeholder: "Paste the AI's whole reply here…", style: { minHeight: "110px" } });
+  const preview = h("div", { class: "aipreview" });
+  const fileIn = h("input", { type: "file", accept: ".txt,.json,.jsonl,.md,text/plain", class: "hidden",
+    onchange: async (e) => { const f = e.target.files[0]; if (f) { reply.value = await f.text(); check(); } } });
+  const check = async () => {
+    if (!reply.value.trim()) { toast("Paste the AI's reply first"); return; }
+    fill(preview, h("span", { class: "spinner tiny" }), " Checking the answers…");
+    try { drawPreview(await api.post("/api/labels/import/check", { text: reply.value })); }
+    catch (e) { fill(preview, h("div", { class: "warn" }, String(e.message || e))); }
+  };
+  const meaning = (it) => it.problem ? h("span", { class: "warn" }, it.problem)
+    : it.action === "hide" ? h("span", { class: "muted" }, "hide from every book")
+    : it.action === "keep" ? h("span", { class: "muted" }, "leave as it is")
+    : h("span", {}, it.tags.map((t, i) => [i ? " + " : "", t.label]));
+  const drawPreview = (r) => {
+    const c = r.counts;
+    const newChecks = r.new_tags.map((t) => ({ t, box: h("input", { type: "checkbox", checked: !t.problem && t.used_by > 0, disabled: !!t.problem }) }));
+    const itemChecks = r.items.map((it) => ({ it, box: h("input", { type: "checkbox", checked: !it.problem, disabled: !!it.problem }) }));
+    const applyBtn = h("button", { class: "btn primary" });
+    const count = () => { applyBtn.textContent = `Apply ${itemChecks.filter((x) => x.box.checked).length} answers`; };
+    itemChecks.forEach((x) => x.box.addEventListener("change", count));
+    count();
+    applyBtn.addEventListener("click", async () => {
+      applyBtn.disabled = true;
+      fill(result, h("span", { class: "spinner tiny" }), " Fixing the labels on your books…");
+      try {
+        const done = await api.post("/api/labels/import/apply", { text: reply.value,
+          keys: itemChecks.filter((x) => x.box.checked).map((x) => x.it.key),
+          new_tags: newChecks.filter((x) => x.box.checked).map((x) => x.t.id) });
+        reply.value = "";
+        fill(preview, h("div", { class: "fixed" }, `✓ Fixed ${fmtNum(done.labels)} labels on ${booksText(done.books)}`,
+          done.new_tags ? `, with ${done.new_tags} new tag${done.new_tags === 1 ? "" : "s"}` : "", ". "),
+          h("button", { class: "btn small ghost", onclick: async () => {
+            try { await api.post("/api/labels/import/undo", { id: done.import }); toast("Import undone"); fill(preview); onApplied(); }
+            catch (e) { toast(String(e.message || e)); }
+          } }, "Undo this import"),
+          h("div", { class: "faint" }, "They left the list below. Copy the next batch and repeat."));
+        tagCache.clear();
+        onApplied();
+      } catch (e) { applyBtn.disabled = false; fill(result, h("span", { class: "warn" }, String(e.message || e))); }
+    });
+    const result = h("span", {});
+    fill(preview,
+      h("div", { class: "aisum" }, `${r.items.length} answers: ${c.tags} mean shared tags, ${c.hide} to hide, ${c.keep} to leave as they are`,
+        c.problems ? h("span", { class: "warn" }, `, ${c.problems} can't be used`) : null, "."),
+      newChecks.length ? h("div", { class: "ainew" }, h("b", {}, "New tags it suggests"), newChecks.map(({ t, box }) => h("label", { class: "check" }, box,
+        h("span", {}, h("b", {}, t.label || t.label_ru), t.label_ru && t.label ? ` / ${t.label_ru}` : "", ` · ${CATS[t.category] || t.category}`,
+          t.description ? h("span", { class: "faint" }, ` — ${t.description}`) : null,
+          h("span", { class: "faint" }, t.problem ? ` (${t.problem})` : ` · for ${t.used_by} label${t.used_by === 1 ? "" : "s"}`))))) : null,
+      h("div", { class: "airows" }, itemChecks.map(({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
+        h("span", { class: "lname" }, it.label), h("span", { class: "n" }, fmtNum(it.books)), h("span", { class: "arrow" }, "→"), meaning(it)))),
+      h("div", { class: "shelf", style: { marginTop: "8px" } }, applyBtn,
+        h("button", { class: "btn small ghost", onclick: () => { itemChecks.forEach((x) => { if (!x.box.disabled) x.box.checked = true; }); count(); } }, "Tick all"),
+        h("button", { class: "btn small ghost", onclick: () => { itemChecks.forEach((x) => { x.box.checked = false; }); count(); } }, "Untick all"),
+        result));
+  };
+  return h("div", { class: "aibox" },
+    h("h2", {}, "Fix labels with an AI chat"),
+    h("p", { class: "faint" }, "Gemini, ChatGPT or any other chat can do the reading for you, on your own subscription. Bookkeeper writes the request; the chat answers in a format Bookkeeper reads back. You check the answers before anything changes, and the whole import can be undone."),
+    h("div", { class: "aistep" }, h("span", { class: "stepn" }, "1"), h("div", {},
+      h("div", { class: "shelf" }, limit, h("button", { class: "btn small primary", onclick: copy }, "Copy the request"),
+        h("button", { class: "btn small", onclick: download, title: "For very long requests: attach the file in the chat instead of pasting" }, "Download as a file"), info),
+      h("div", { class: "faint" }, "The most common labels in the list below (with its site and search filters), the shared tags, and instructions. Paste it into the chat and send it, or attach the file."))),
+    h("div", { class: "aistep" }, h("span", { class: "stepn" }, "2"), h("div", {},
+      reply,
+      h("div", { class: "shelf", style: { marginTop: "6px" } }, h("button", { class: "btn small primary", onclick: check }, "Check the answers"),
+        h("button", { class: "btn small", onclick: () => fileIn.click() }, "Load a file…"), fileIn,
+        h("span", { class: "faint" }, "Copy the chat's whole reply (its code block has a copy button). If it stops halfway, paste what it wrote: the rest stays in the list.")))),
+    preview);
+}
+
 async function renderLabels() {
   const { params } = parseHash();
   const tab = params.tab === "mine" ? "mine" : "todo";
@@ -1345,6 +1570,7 @@ async function renderLabels() {
   const list = h("div", { class: "lrows" });
   const more = h("div", { class: "loadmore" });
   const summary = h("span", { class: "muted" });
+  const aiSlot = h("div", {});
   const remember = () => history.replaceState(null, "", "#/labels?" + toQuery({ site, q }));
   const load = async (reset) => {
     if (reset) { offset = 0; list.replaceChildren(); }
@@ -1361,16 +1587,30 @@ async function renderLabels() {
   };
   const loadMine = async () => {
     fill(more, h("span", { class: "spinner" }));
-    let fixes = [];
-    try { fixes = await api.get("/api/labels/fixes"); } catch (e) { fill(more, h("span", { class: "warn" }, String(e.message || e))); return; }
+    let fixes = [], imports = [];
+    try { [fixes, imports] = await Promise.all([api.get("/api/labels/fixes"), api.get("/api/labels/imports")]); }
+    catch (e) { fill(more, h("span", { class: "warn" }, String(e.message || e))); return; }
     summary.textContent = `${fmtNum(fixes.length)} fix${fixes.length === 1 ? "" : "es"}`;
-    list.replaceChildren(...fixes.map((f) => labelRow({ label: f.label, books: f.books, fix: { tags: f.tags, hidden: f.hidden, separate: f.separate } })));
+    const importRows = imports.length ? h("div", { class: "editbox", style: { marginTop: "10px" } }, h("h2", { style: { fontSize: "15px", margin: "0 0 6px" } }, "Imported from an AI chat"),
+      imports.map((m) => h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()), h("span", { class: "n" }, `${fmtNum(m.count)} labels, ${booksText(m.books)}`),
+        m.new_tags && m.new_tags.length ? h("span", { class: "faint" }, `${m.new_tags.length} new tag${m.new_tags.length === 1 ? "" : "s"}`) : null,
+        m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: async () => {
+          if (!confirm("Undo this whole import? Its labels go back to how they were, and the tags it made are deleted.")) return;
+          try { await api.post("/api/labels/import/undo", { id: m.id }); toast("Import undone"); tagCache.clear(); loadMine(); }
+          catch (e) { toast(String(e.message || e)); }
+        } }, "Undo this import")))) : null;
+    list.replaceChildren(...[importRows, ...fixes.map((f) => labelRow({ label: f.label, books: f.books, fix: { tags: f.tags, hidden: f.hidden, separate: f.separate } }))].filter(Boolean));
     fill(more, fixes.length ? h("span", { class: "faint" }, "They're kept in the [fixes] table of my_tags.toml.") : h("span", { class: "faint" }, "No fixes yet."));
   };
   const siteSel = h("select", { class: "input", style: { width: "auto" }, onchange: (e) => { site = e.target.value; remember(); load(true); } },
     h("option", { value: "" }, "All sites"), Object.keys(meta.sites).map((s) => h("option", { value: s, selected: s === site }, siteName(s))));
   const search = h("input", { class: "input", placeholder: "Find a label…", value: q, style: { maxWidth: "260px" } });
   search.addEventListener("input", debounce(() => { q = search.value.trim(); remember(); load(true); }, 350));
+  const aiBtn = h("button", { class: "btn", title: "Let Gemini, ChatGPT or another AI chat suggest what the labels mean, a batch at a time", onclick: () => {
+    if (aiSlot.firstChild) { aiSlot.replaceChildren(); store.set("aiPanel", false); return; }
+    aiSlot.replaceChildren(aiPanel(() => ({ site, q }), () => load(true)));
+    store.set("aiPanel", true);
+  } }, "✨ Fix with an AI chat");
   app.replaceChildren(h("div", { class: "page labels" },
     h("div", { class: "crumbs" }, h("a", { href: "#/tags" }, "All tags"), " › Fix site labels"),
     h("h1", {}, "Fix site labels"),
@@ -1378,11 +1618,13 @@ async function renderLabels() {
     h("div", { class: "seg ltabs" },
       h("a", { class: tab === "todo" ? "on" : "", href: "#/labels" }, "To fix"),
       h("a", { class: tab === "mine" ? "on" : "", href: "#/labels?tab=mine" }, "My fixes")),
-    tab === "todo" ? h("div", { class: "lfilters" }, siteSel, search, summary) : h("div", { class: "lfilters" }, summary),
+    tab === "todo" ? h("div", { class: "lfilters" }, siteSel, search, aiBtn, summary) : h("div", { class: "lfilters" }, summary),
+    tab === "todo" ? aiSlot : null,
     h("div", { class: "legend" }, tab === "todo"
-      ? [h("span", {}, "Click a suggestion, or type a tag. Hide removes junk labels (site names, years…) from every book."), h("span", {}, "Everything can be undone.")]
+      ? [h("span", {}, "Click a suggestion, or type a tag. Hide removes junk labels (site names, years…) from every book; Leave as is takes a label off this list."), h("span", {}, "Everything can be undone.")]
       : [h("span", {}, "Undo puts a label back the way Bookkeeper read it before.")]),
     list, more));
+  if (tab === "todo" && store.get("aiPanel", false)) aiSlot.replaceChildren(aiPanel(() => ({ site, q }), () => load(true)));
   if (tab === "todo") await load(true); else await loadMine();
 }
 

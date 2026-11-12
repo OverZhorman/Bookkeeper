@@ -429,3 +429,37 @@ code, .mono { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; f
 .chip .edit { border: 0; background: none; color: var(--accent-text); cursor: pointer; padding: 0 0 0 4px; font-size: 12px; }
 .fixbox { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .fixbox h2 { margin-bottom: 10px; }
+
+/* editing tags */
+.titlerow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.toolbar2 { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.editbox { padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
+.editbox h2 { margin-bottom: 10px; }
+.tagform { display: grid; gap: 10px; max-width: 760px; }
+.tagform .field { margin: 0; }
+.tagform .field > span { font-size: 12px; color: var(--muted); }
+.tagform textarea.note { min-height: 64px; }
+.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.addrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.tagpage.editing .tsec .chips .chip.static { padding-right: 6px; }
+@media (max-width: 620px) { .row3 { grid-template-columns: 1fr; } }
+
+/* fixing labels with an AI chat */
+.aibox { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--surface); display: grid; gap: 10px; }
+.aibox h2 { font-size: 16px; margin: 0; }
+.aibox > p { margin: 0; font-size: 12.5px; }
+.aistep { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
+.aistep .stepn { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-text); font-weight: 700; display: grid; place-items: center; font-size: 12px; }
+.aistep .faint { font-size: 12px; margin-top: 4px; }
+.aisum { font-weight: 600; margin-bottom: 6px; }
+.ainew { display: grid; gap: 2px; margin: 4px 0 8px; font-size: 13px; }
+.airows { max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 4px 8px; }
+.airow { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 13px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.airow:last-child { border-bottom: 0; }
+.airow input { accent-color: var(--accent); flex: none; }
+.airow .lname { font-weight: 600; }
+.airow .n { color: var(--faint); font-size: 11.5px; }
+.airow .arrow { color: var(--faint); }
+.airow.bad { opacity: .75; cursor: default; }
+.aipreview .warn, .aisum .warn { color: var(--danger); }
+.aipreview .fixed { color: var(--include); font-weight: 600; display: inline; }

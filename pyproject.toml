@@ -1,6 +1,6 @@
 [project]
 name = "bookkeeper"
-version = "0.4.1"
+version = "0.4.4"
 description = "A personal catalog of books and web novels from many sites, with merged tags and automatic first-person detection"
 readme = "README.md"
 requires-python = ">=3.11"

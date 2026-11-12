@@ -4,9 +4,12 @@ A fix maps a label as the sites write it (any spelling: «Попаданиевд
 shared tags, hides it ([]), or keeps it as a tag of its own (for a label Bookkeeper maps to the wrong tag).
 Fixes live in my_tags.toml's [fixes] table and apply to the books you have and to every book that arrives later.
 Books keep their labels as written (books.labels), so any fix can be undone."""
+import json
+import re
+
 from . import db, library, search
 from . import tags as T
-from .db import jload
+from .db import jload, now
 
 PAGE = 50
 # Tags a label hardly ever means, even when its books all have them (every Author.Today book is a "Novel").
@@ -21,10 +24,11 @@ def _rows_by_id(c, ids, sql: str) -> list:
     return out
 
 
-def _books_with(c, label: str) -> set[int]:
-    """Books whose site labels include this label, written any way (using the fixes as they are now)."""
+def _books_with(c, label: str, mapped_to: list[str] | None = None) -> set[int]:
+    """Books whose site labels include this label, written any way. `mapped_to`: the tags the label meant until
+    now, when the tag list has already changed (default: what it means now)."""
     k = T.key(label)
-    tag_ids = set(T.canonical(label))
+    tag_ids = set(T.canonical(label) if mapped_to is None else mapped_to)
     tag_ids |= {r[0] for r in c.execute("SELECT id FROM tags WHERE known = 0") if T.key(r[0]) == k}
     if tag_ids:
         books = {r[0] for r in _rows_by_id(c, tag_ids, "SELECT DISTINCT book_id FROM book_tags "
@@ -66,7 +70,7 @@ def _by_name(label: str, names) -> list[tuple[str, int]]:
     return sorted(best.items(), key=lambda kv: -kv[1])
 
 
-def _by_company(c, tag_id: str, ctx: dict) -> list[tuple[str, float]]:
+def _by_company(c, tag_id: str, ctx: dict, min_share: float = 0.5, min_lift: float = 3) -> list[tuple[str, float]]:
     """Shared tags most books with this label also have, far more often than books in general."""
     rows = c.execute(
         "SELECT bt.tag, COUNT(DISTINCT bt.book_id) FROM book_tags bt JOIN (SELECT DISTINCT book_id FROM book_tags "
@@ -80,7 +84,7 @@ def _by_company(c, tag_id: str, ctx: dict) -> list[tuple[str, float]]:
         if not base or n < 2 or not n_x or T.info(t)["category"] in _NOT_MEANINGS:
             continue
         share = n / n_x
-        if share >= 0.5 and share / (base / ctx["total"]) >= 3:
+        if share >= min_share and share / (base / ctx["total"]) >= min_lift:
             out.append((t, share))
     return sorted(out, key=lambda x: -x[1])
 
@@ -103,29 +107,7 @@ def unrecognized(site: str | None = None, q: str = "", offset: int = 0, limit: i
     that differ only in spaces, case or symbols («сложные отношения», «#СложныеОтношения») are one row: one fix
     covers them all."""
     c = db.conn()
-    if site:
-        rows = c.execute("SELECT t.id, t.label, COUNT(DISTINCT bt.book_id) AS books FROM tags t JOIN book_tags bt "
-                         "ON bt.tag = t.id AND bt.source = 'site' JOIN books b ON b.id = bt.book_id "
-                         "WHERE t.known = 0 AND t.category = 'other' AND b.site = ? GROUP BY t.id", (site,)).fetchall()
-    else:
-        rows = c.execute("SELECT id, label, books FROM tags WHERE known = 0 AND category = 'other' AND books > 0").fetchall()
-    groups: dict[str, dict] = {}
-    for r in rows:
-        k = T.key(r["id"])
-        if not k:
-            continue
-        g = groups.setdefault(k, {"key": k, "ids": [], "spellings": [], "books": 0, "top": -1})
-        g["ids"].append(r["id"])
-        g["spellings"].append(r["label"])
-        g["books"] += r["books"]
-        if r["books"] > g["top"]:
-            g.update(top=r["books"], id=r["id"], label=r["label"])
-    items = list(groups.values())
-    if q.strip():
-        ql, qk = q.strip().lower().replace("ё", "е"), T.key(q)
-        items = [g for g in items if (qk and qk in g["key"]) or any(ql in s.lower().replace("ё", "е")
-                                                                     for s in g["spellings"])]
-    items.sort(key=lambda g: (-g["books"], g["key"]))
+    items = _groups(c, site, q)
     page = items[offset:offset + limit]
     by_id = {i: g for g in page for i in g["ids"]}
     for g in page:
@@ -143,6 +125,37 @@ def unrecognized(site: str | None = None, q: str = "", offset: int = 0, limit: i
                     "sites": [{"site": s, "books": n} for s, n in sorted(g["sites"].items(), key=lambda x: -x[1])],
                     "suggestions": suggestions(g["label"], g["id"], ctx)})
     return {"total": len(items), "books": sum(g["books"] for g in items), "offset": offset, "labels": out}
+
+
+def _groups(c, site: str | None = None, q: str = "") -> list[dict]:
+    """Unrecognized labels grouped by spelling, most books first, without the ones you fixed or left as they are."""
+    if site:
+        rows = c.execute("SELECT t.id, t.label, COUNT(DISTINCT bt.book_id) AS books FROM tags t JOIN book_tags bt "
+                         "ON bt.tag = t.id AND bt.source = 'site' JOIN books b ON b.id = bt.book_id "
+                         "WHERE t.known = 0 AND t.category = 'other' AND b.site = ? GROUP BY t.id", (site,)).fetchall()
+    else:
+        rows = c.execute("SELECT id, label, books FROM tags WHERE known = 0 AND category = 'other' AND books > 0").fetchall()
+    fixed = {T.key(name) for name in T.fixes()}
+    groups: dict[str, dict] = {}
+    for r in rows:
+        k = T.key(r["id"])
+        if not k:
+            continue
+        if k in fixed:
+            continue
+        g = groups.setdefault(k, {"key": k, "ids": [], "spellings": [], "books": 0, "top": -1})
+        g["ids"].append(r["id"])
+        g["spellings"].append(r["label"])
+        g["books"] += r["books"]
+        if r["books"] > g["top"]:
+            g.update(top=r["books"], id=r["id"], label=r["label"])
+    items = list(groups.values())
+    if q.strip():
+        ql, qk = q.strip().lower().replace("ё", "е"), T.key(q)
+        items = [g for g in items if (qk and qk in g["key"]) or any(ql in s.lower().replace("ё", "е")
+                                                                     for s in g["spellings"])]
+    items.sort(key=lambda g: (-g["books"], g["key"]))
+    return items
 
 
 def current_fix(label: str) -> dict | None:
@@ -197,3 +210,314 @@ def my_fixes() -> list[dict]:
     out = [{"label": name, "tags": search._brief(c, ids), "hidden": not ids,
             "separate": ids == [T.own_id(name)], "books": counts[T.key(name)]} for name, ids in fx.items()]
     return sorted(out, key=lambda x: (-x["books"], T.key(x["label"])))
+
+
+# ---------------------------------------------------------------- many fixes at once (AI chat imports)
+def _unknown_index(c) -> dict[str, list[tuple[str, int]]]:
+    """key -> [(tag id, books)] for every site label that isn't a shared tag."""
+    out: dict[str, list[tuple[str, int]]] = {}
+    for tid, books in c.execute("SELECT id, books FROM tags WHERE known = 0"):
+        k = T.key(tid)
+        if k:
+            out.setdefault(k, []).append((tid, books or 0))
+    return out
+
+
+def _books_with_many(c, names) -> set[int]:
+    """Books whose site labels include any of these labels (written any way), in one pass."""
+    keys = {T.key(n) for n in names if T.key(n)}
+    if not keys:
+        return set()
+    index = _unknown_index(c)
+    tag_ids, scan = set(), False
+    for n in names:
+        ids = set(T.canonical(n)) | {tid for tid, _ in index.get(T.key(n), [])}
+        if ids:
+            tag_ids |= ids
+        else:
+            scan = True  # a hidden label has no tag to start from
+    if scan:
+        rows = c.execute("SELECT id, labels FROM books WHERE labels IS NOT NULL AND labels != '[]'").fetchall()
+    else:
+        books = {r[0] for r in _rows_by_id(c, tag_ids, "SELECT DISTINCT book_id FROM book_tags "
+                                                      "WHERE source = 'site' AND tag IN ({q})")}
+        rows = _rows_by_id(c, books, "SELECT id, labels FROM books WHERE id IN ({q})")
+    return {r[0] for r in rows if any(T.key(x) in keys for x in jload(r[1], []) or [])}
+
+
+def apply_many(entries, new_tags=()) -> dict:
+    """Many label fixes in one go: entries [(label, ids)], where ids None undoes a fix, [] hides the label and
+    [its own id] leaves it as it is; new_tags are made first. One write to my_tags.toml, one re-tagging pass.
+    Returns how many labels and books changed, and what each label meant before (for undo)."""
+    c = db.conn()
+    entries = [(label.strip(), ids) for label, ids in entries if T.key(label)]
+    affected = _books_with_many(c, [label for label, _ in entries])
+    previous: dict[str, list[str] | None] = {}
+    with T._FILE_LOCK:
+        fixes = T.fixes()
+        by_key = {T.key(name): name for name in fixes}
+        for label, ids in entries:
+            old = by_key.pop(T.key(label), None)
+            previous.setdefault(label, fixes.get(old) if old else None)
+            if old:
+                fixes.pop(old)
+            if ids is not None:
+                fixes[label] = list(dict.fromkeys(ids))
+                by_key[T.key(label)] = label
+        changes = {("tags", t["id"]): {k: v for k, v in t.items() if k != "id" and v} for t in new_tags}
+        changes[("fixes",)] = dict(sorted(fixes.items(), key=lambda kv: T.key(kv[0])))
+        T.write_tables(changes)
+    T.reload()
+    if new_tags:
+        library.sync_tag_rows([t["id"] for t in new_tags])
+    library.retag_books(affected)
+    return {"labels": len(entries), "books": len(affected), "previous": previous}
+
+
+AI_PROMPT = """\
+I keep a personal catalog of web novels collected from book sites (Wattpad, Author.Today, Ficbook, Litnet,
+RanobeLib and others). Every site tags books its own way, and my app maps those tags onto one list of shared
+tags. Below are SITE LABELS the app couldn't map (most common first) and the list of SHARED TAGS.
+Decide what each site label means.
+
+For every site label, answer with one JSON object on its own line:
+{"label": "<the label exactly as given>", "tags": ["<shared tag id>", ...]}
+    the label means these shared tags
+{"label": "<the label>", "hide": true}
+    junk that says nothing about the book itself: site or app names, years, contests, "recommend",
+    "my first story", emoji, author notes, random words
+{"label": "<the label>", "keep": true}
+    a real label that no shared tag covers, or you aren't sure
+
+You may also propose a new shared tag when several labels share a useful meaning that no shared tag covers.
+Write it once, on its own line before the labels that use it, then use its id in "tags":
+{"new_tag": {"id": "complicated-relationships", "en": "Complicated relationships", "ru": "Сложные отношения", "uk": "Складні стосунки", "category": "relationship", "description": "The main characters' relationship is complicated."}}
+Categories: genre, theme, protagonist, setting, orientation, relationship, content, format, demographic, fandom.
+
+Guidelines:
+- Use only ids from SHARED TAGS, or the ids of new tags you proposed. Don't invent other ids.
+- A label can mean several tags: "попаданцы в магический мир" -> ["isekai", "magic"].
+- Character, place and pairing names mean their fandom: "саске" -> ["fandom-naruto"]. For a fandom that isn't
+  in the list, write "fandom:<the fandom's usual name>", for example "fandom:Genshin Impact".
+- "often_with" lists shared tags that most books with the label also have, and "examples" are titles of books
+  with it. Use them as hints, but decide by what the label itself means.
+- Prefer the most specific tag that fits. Don't add broader tags that follow anyway (litrpg already brings
+  rpg-elements), and don't map a label to a tag just because its books often have it.
+- Answer only with JSON lines, one for every site label, all in one code block. No explanations.
+"""
+
+
+def _shared_tag_lines(c) -> list[str]:
+    """The shared tags for the prompt: id | English | Russian | category | meaning."""
+    order = {cat: n for n, cat in enumerate(T.CATEGORY_ORDER)}
+    lines = []
+    for tid in sorted(T.all_ids(), key=lambda t: (order.get(T.info(t).get("category"), 99), t)):
+        i = T.info(tid)
+        desc = " ".join((T.describe(tid) or "").split())
+        desc = desc if len(desc) <= 140 else desc[:139] + "…"
+        lines.append(" | ".join([tid, i.get("label") or "", i.get("label_ru") or "", i.get("category") or "", desc]).rstrip(" |"))
+    # fandoms from the sites (Ficbook) that aren't built in, the biggest ones
+    for tid, label in c.execute("SELECT id, label FROM tags WHERE id LIKE 'fandom:%' AND books >= 2 "
+                                "ORDER BY books DESC LIMIT 300"):
+        lines.append(f"{tid} | {label} | | fandom")
+    return lines
+
+
+def export_for_ai(site: str | None = None, q: str = "", limit: int = 250) -> dict:
+    """A prompt for an AI chat: the most common unrecognized labels (with hints) and the shared tags."""
+    c = db.conn()
+    groups = _groups(c, site, q)
+    page = groups[:max(1, limit)]
+    ctx = _context(c)
+    lines = []
+    for g in page:
+        item = {"label": g["label"], "books": g["books"]}
+        often = [t for t, _ in _by_company(c, g["id"], ctx, min_share=0.3, min_lift=1.5)[:4]]
+        if often:
+            item["often_with"] = often
+        q_ = ",".join("?" * len(g["ids"]))
+        titles = [r[0] for r in c.execute(
+            f"SELECT DISTINCT b.title FROM book_tags bt JOIN books b ON b.id = bt.book_id WHERE bt.tag IN ({q_}) "
+            f"AND bt.source = 'site' ORDER BY COALESCE(b.popularity, 0) DESC LIMIT 2", g["ids"])]
+        if titles:
+            item["examples"] = [t if len(t) <= 70 else t[:69] + "…" for t in titles]
+        lines.append(json.dumps(item, ensure_ascii=False))
+    text = (AI_PROMPT + "\nSHARED TAGS (id | English | Russian | category | meaning)\n" + "\n".join(_shared_tag_lines(c))
+            + f"\n\nSITE LABELS ({len(page)}, one JSON object per line)\n" + "\n".join(lines) + "\n")
+    return {"text": text, "count": len(page), "total": len(groups), "chars": len(text)}
+
+
+def _objects(text: str) -> list[dict]:
+    """Every JSON object in an AI's reply, wherever it is: in code blocks, a list, one per line, with words around."""
+    out, depth, start, in_str, esc = [], 0, 0, False, False
+    for i, ch in enumerate(text):
+        if depth and in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif depth and ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[start:i + 1])
+                except ValueError:
+                    continue
+                if isinstance(obj, dict):
+                    out.append(obj)
+    return out
+
+
+def _new_tag(spec: dict) -> dict:
+    names = {"label": spec.get("en") or spec.get("label"), "label_ru": spec.get("ru") or spec.get("label_ru"),
+             "label_uk": spec.get("uk") or spec.get("label_uk")}
+    names = {k: str(v).strip() for k, v in names.items() if v and str(v).strip()}
+    tid = str(spec.get("id") or "").strip().lower()
+    tid = re.sub(r"[^a-z0-9а-яёіїєґ:-]+", "-", tid).strip("-") or re.sub(
+        r"[^a-z0-9]+", "-", (names.get("label") or "").lower()).strip("-")
+    category = str(spec.get("category") or "theme").strip().lower()
+    out = {"id": tid, **names, "category": category if category in T.CATEGORY_ORDER else "theme",
+           "description": str(spec.get("description") or "").strip(), "problem": None, "same_as": None}
+    if not tid or not names:
+        out["problem"] = "it has no id or name"
+    elif T.is_known(tid):
+        out["same_as"] = tid  # there's a shared tag with that id already: labels can just use it
+    else:
+        for name in names.values():
+            others = [t for t in T.canonical(name) if T.is_known(t)]
+            if others:
+                out["same_as"] = others[0]  # it's an existing tag under another id
+                break
+    return out
+
+
+def _target(x: str, new: dict) -> list[str] | None:
+    """Tag ids for one entry of an answer's "tags" (an id, a new tag's id, a fandom, or a tag's name)."""
+    if x in new:
+        return [new[x]["same_as"] or x] if not new[x]["problem"] else None
+    if T.is_known(x):
+        return [x]
+    if x.lower().startswith(T.FANDOM_PREFIX):
+        return T.canonical(x) or None
+    ids = T.canonical(x)
+    return ids if ids and all(T.is_known(i) for i in ids) else None
+
+
+def check_import(text: str) -> dict:
+    """What an AI's reply would do, label by label, before anything changes."""
+    c = db.conn()
+    objs = _objects(text or "")
+    if not any("label" in o or "new_tag" in o for o in objs):
+        raise ValueError("No answers found. Paste the AI's whole reply: the lines that start with {\"label\".")
+    new = {}
+    for o in objs:
+        if isinstance(o.get("new_tag"), dict):
+            t = _new_tag(o["new_tag"])
+            new[t["id"]] = t
+    index = _unknown_index(c)
+    fixed = {T.key(name) for name in T.fixes()}
+    new_names = {t["id"]: t.get("label") or t.get("label_ru") for t in new.values()}
+    items, seen = [], set()
+    for o in objs:
+        if "label" not in o:
+            continue
+        label = str(o["label"]).strip()
+        k = T.key(label)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        it = {"label": label, "key": k, "books": sum(b for _, b in index.get(k, [])), "problem": None,
+              "action": "tags", "ids": [], "tags": []}
+        items.append(it)
+        # Only labels that are still unrecognized: an answer can't touch a shared tag's own names ("hide Фэнтези").
+        if k in fixed:
+            it["problem"] = "already fixed"
+            continue
+        if k not in index or (T.canonical(label) and all(T.is_known(i) for i in T.canonical(label))):
+            it["problem"] = "not an unrecognized label in your library"
+            continue
+        if o.get("hide") is True:
+            it.update(action="hide", ids=[])
+        elif o.get("keep") is True:
+            it.update(action="keep", ids=[T.own_id(label)])
+        else:
+            raw = o.get("tags") if o.get("tags") is not None else o.get("tag")
+            raw = [raw] if isinstance(raw, str) else [str(x) for x in raw or []]
+            ids, bad = [], []
+            for x in (x.strip() for x in raw):
+                found = _target(x, new) if x else None
+                if found:
+                    ids += found
+                elif x:
+                    bad.append(x)
+            it.update(action="tags", ids=list(dict.fromkeys(ids)))
+            if bad:
+                it["problem"] = "no tag " + ", ".join(f"“{b}”" for b in bad)
+            elif not ids:
+                it["problem"] = "no tags, hide or keep"
+        if it["action"] == "tags":
+            it["tags"] = [{"id": i, "label": new_names.get(i) or T.info(i)["label"]} for i in it["ids"]]
+    used = {i for it in items for i in it["ids"]}
+    new_tags = [{**t, "used_by": sum(1 for it in items if t["id"] in it["ids"])} for t in new.values()
+                if not t["same_as"]]
+    counts = {a: sum(1 for it in items if it["action"] == a and not it["problem"]) for a in ("tags", "hide", "keep")}
+    counts["problems"] = sum(1 for it in items if it["problem"])
+    counts["new_tags"] = sum(1 for t in new_tags if not t["problem"] and t["id"] in used)
+    return {"items": items, "new_tags": new_tags, "counts": counts}
+
+
+def apply_import(text: str, keys=None, new_ids=None) -> dict:
+    """Apply an AI's reply: the answers whose keys you kept ticked (all when None), with the new tags you kept."""
+    preview = check_import(text)
+    proposed = {t["id"] for t in preview["new_tags"]}
+    make = [t for t in preview["new_tags"] if not t["problem"] and (new_ids is None or t["id"] in new_ids)]
+    dropped = proposed - {t["id"] for t in make}
+    entries = []
+    for it in preview["items"]:
+        if it["problem"] or (keys is not None and it["key"] not in keys):
+            continue
+        ids = [i for i in it["ids"] if i not in dropped] if it["action"] == "tags" else it["ids"]
+        if it["action"] == "tags" and not ids:
+            continue
+        entries.append((it["label"], ids))
+    used = {i for _, ids in entries for i in ids}
+    make = [{k: t[k] for k in ("id", "label", "label_ru", "label_uk", "category", "description") if t.get(k)}
+            for t in make if t["id"] in used]
+    if not entries:
+        raise ValueError("Nothing to apply: tick at least one answer.")
+    result = apply_many(entries, make)
+    record = {"id": now().replace(":", "").replace("-", ""), "at": now(), "labels": result["previous"],
+              "new_tags": [t["id"] for t in make], "count": result["labels"], "books": result["books"]}
+    db.set_setting("label_imports", [record, *db.get_setting("label_imports", [])][:30])
+    return {**result, "import": record["id"], "new_tags": len(make)}
+
+
+def imports() -> list[dict]:
+    """Your imports of AI answers, newest first."""
+    return [{k: r.get(k) for k in ("id", "at", "count", "books", "new_tags", "undone")}
+            for r in db.get_setting("label_imports", [])]
+
+
+def undo_import(import_id: str) -> dict:
+    """Put back every label an import changed, and delete the tags it made (unless something else uses them)."""
+    from . import tagedit  # local import: tagedit uses this module
+    records = db.get_setting("label_imports", [])
+    rec = next((r for r in records if r.get("id") == import_id), None)
+    if not rec or rec.get("undone"):
+        raise ValueError("That import is already undone.")
+    result = apply_many(list(rec["labels"].items()))
+    still_used = {i for ids in T.fixes().values() for i in ids}
+    for tid in rec.get("new_tags", []):
+        if tid not in still_used and tid in (T.user_config().get("tags") or {}):
+            tagedit.delete(tid)
+    rec["undone"] = True
+    db.set_setting("label_imports", records)
+    return result

@@ -7,7 +7,8 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, accounts, browser, config, db, diagnostics, export, handoff, labels, library, search
+from .. import (__version__, accounts, browser, config, db, diagnostics, export, handoff, labels, library, search,
+               tagedit)
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -137,6 +138,45 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
         return {"suggestions": labels.suggestions(label, id or None) if label.strip() else [],
                 "fix": labels.current_fix(label) if label.strip() else None}
 
+    # A batch of labels as a prompt for an AI chat, and the chat's answers back (see labels.py).
+    @app.get("/api/labels/export")
+    def label_export(site: str = "", q: str = "", limit: int = 250):
+        return labels.export_for_ai(site or None, q[:200], max(1, min(limit, 2000)))
+
+    @app.get("/api/labels/export.txt")
+    def label_export_file(site: str = "", q: str = "", limit: int = 250):
+        r = labels.export_for_ai(site or None, q[:200], max(1, min(limit, 2000)))
+        return Response(r["text"], media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="bookkeeper-labels-{r["count"]}.txt"'})
+
+    @app.post("/api/labels/import/check")
+    def label_import_check(body: dict = Body(...)):
+        try:
+            return labels.check_import(str(body.get("text") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/labels/import/apply")
+    def label_import_apply(body: dict = Body(...)):
+        keys = body.get("keys")
+        new_tags = body.get("new_tags")
+        try:
+            return labels.apply_import(str(body.get("text") or ""), None if keys is None else set(map(str, keys)),
+                                       None if new_tags is None else set(map(str, new_tags)))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/labels/imports")
+    def label_imports():
+        return labels.imports()
+
+    @app.post("/api/labels/import/undo")
+    def label_import_undo(body: dict = Body(...)):
+        try:
+            return labels.undo_import(str(body.get("id") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     @app.post("/api/labels/fix")
     def label_fix(body: dict = Body(...)):
         tags = None if body.get("undo") else [] if body.get("hide") else [str(t) for t in body.get("tags") or []]
@@ -152,7 +192,46 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
     def tag_one(id: str = "", full: int = 0):
         if not id:
             raise HTTPException(404)
-        return search.tag_page(id) if full else search.tag_brief(id)
+        return {**search.tag_page(id), **tagedit.page_extras(id)} if full else search.tag_brief(id)
+
+    # ---------- editing tags (see tagedit.py) ----------
+    def edit_call(fn):
+        try:
+            return fn()
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/tag/edit")
+    def tag_edit(body: dict = Body(...)):
+        tid = str(body.get("id") or "")
+        edit_call(lambda: tagedit.edit(tid, {k: str(body.get(k) or "") for k in tagedit.FIELDS if k in body}))
+        return {"id": tid}
+
+    @app.post("/api/tag/new")
+    def tag_new(body: dict = Body(...)):
+        fields = {k: str(body.get(k) or "") for k in tagedit.FIELDS}
+        return {"id": edit_call(lambda: tagedit.create(fields, from_label=str(body.get("from_label") or "")))}
+
+    @app.post("/api/tag/link")
+    def tag_link(body: dict = Body(...)):
+        edit_call(lambda: tagedit.link(str(body.get("kind") or ""), str(body.get("id") or ""),
+                                       str(body.get("other") or ""), bool(body.get("on", True))))
+        return {"ok": True}
+
+    @app.post("/api/tag/alias")
+    def tag_alias(body: dict = Body(...)):
+        return edit_call(lambda: tagedit.alias(str(body.get("id") or ""), str(body.get("alias") or ""),
+                                               bool(body.get("on", True))))
+
+    @app.post("/api/tag/reset")
+    def tag_reset(body: dict = Body(...)):
+        edit_call(lambda: tagedit.reset(str(body.get("id") or "")))
+        return {"ok": True}
+
+    @app.post("/api/tag/delete")
+    def tag_delete(body: dict = Body(...)):
+        edit_call(lambda: tagedit.delete(str(body.get("id") or "")))
+        return {"ok": True}
 
     # ---------- sites ----------
     @app.get("/api/sites")

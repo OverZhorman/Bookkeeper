@@ -62,10 +62,19 @@ class WuxiaClick(Site):
             return
         page = state.get("page", 1)
         while True:
-            books, pages = self._browse(page)
+            try:
+                books, pages = self._browse(page)
+            except NotFound:
+                # Past the last page the site answers "not found" (and new books keep moving the end back).
+                # Inside the listing it's a hiccup: stop and try again later.
+                if page > 1 and page > state.get("pages", 0):
+                    state.update(full_done=True, page=1)
+                    return
+                raise
             if not books or (pages and page > pages):
                 state.update(full_done=True, page=1)
                 return
+            state["pages"] = pages
             yield books
             page += 1
             state["page"] = page

@@ -34,6 +34,7 @@ class BookInfo:
     updated_at: str | None = None
     tags: list[str] | None = None             # labels as written on the site (genres, tags, fandoms...)
     partial_tags: bool = False                # True: a listing page's short tag list; never replaces full tags
+    add_tags: bool = False                    # True: just more labels for a book already listed (others stay)
     extra: dict = field(default_factory=dict)
     complete: bool = False                    # True: nothing more to fetch for the details step
 
@@ -76,6 +77,16 @@ class Site:
     lists_adult = False                       # the catalog marks 18+ books, so they used to be skipped there
     # Read the catalog once more from the start in 0.4, for the age ratings it lists (older versions didn't keep them).
     age_rescan = False
+    # Raised when a connector changes how it walks its site: its listing then starts again, once (crawler.py).
+    state_version = 0
+    # Set by discover(): True while a batch comes from a downloaded file (the crawler then takes several batches at
+    # once), and what to show on the Sites page meanwhile.
+    batch_offline = False
+    discover_activity: str | None = None
+    # A huge, slow site: its first full listing gets all the requests (details and narration checks wait for it),
+    # and afterwards the newest books come first for those.
+    listing_first = False
+    newest_first = False
     has_text = True                           # False: catalog only (no narration check, no downloads)
     # Browser extensions (in your own Waterfox) that can download this site's books, e.g. ExLoader.
     extension_downloads: tuple[str, ...] = ()

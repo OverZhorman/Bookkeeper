@@ -32,6 +32,8 @@ def upsert_book(site: str, info: BookInfo, details: bool = False) -> int:
         "adult": int(bool(info.adult)), "access": info.access, "created_at": info.created_at,
         "updated_at": info.updated_at, "age_rating": normalize_age(info.age_rating),
     }
+    if info.add_tags:
+        return _add_labels(site, info)
     with db.transaction() as c:
         row = c.execute("SELECT id, extra, meta_at FROM books WHERE site=? AND sid=?", (site, info.sid)).fetchone()
         replace_tags = info.tags is not None and not (info.partial_tags and row and row["meta_at"])
@@ -49,7 +51,7 @@ def upsert_book(site: str, info: BookInfo, details: bool = False) -> int:
                 c.execute(f"UPDATE books SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?",
                           [*sets.values(), book_id])
         else:
-            vals.update(site=site, sid=info.sid, added_at=now(), extra=jdump(info.extra or {}),
+            vals.update(site=site, sid=info.sid, added_at=now(), extra=jdump(info.extra or {}), labels="[]",
                         meta_at=now() if (details or info.complete) else None)
             cols = list(vals)
             cur = c.execute(f"INSERT INTO books({', '.join(cols)}) VALUES({', '.join('?' for _ in cols)})",
@@ -104,6 +106,23 @@ def _replace_tags(c, book_id: int, source: str, pairs):
                   (book_id, tag, source, raw))
 
 
+def _add_labels(site: str, info: BookInfo) -> int | None:
+    """More site labels for a book that's listed already (Flibusta's genre pages); others are left alone."""
+    with db.transaction() as c:
+        row = c.execute("SELECT id FROM books WHERE site=? AND sid=?", (site, info.sid)).fetchone()
+        if not row:
+            return None
+        book_id = row["id"]
+        have = _site_labels(c, book_id)
+        new = [t for t in info.tags or [] if t and t.strip() and t.strip() not in have]
+        if new:
+            _set_site_labels(c, book_id, have + new)
+            _refresh_rules(c, book_id)
+            _drop_confirmed_maybes(c, book_id)
+            _recompute_pov(c, book_id)
+    return book_id
+
+
 def _site_labels(c, book_id: int) -> list[str]:
     """The labels the site gave a book, exactly as written (also ones you hid, which map to no tag)."""
     row = c.execute("SELECT labels FROM books WHERE id=?", (book_id,)).fetchone()
@@ -122,9 +141,10 @@ def _set_site_labels(c, book_id: int, raws) -> None:
     _replace_tags(c, book_id, "site", [(t, raw) for raw in raws for t in T.canonical(raw)])
 
 
-def retag_books(book_ids) -> set[str]:
+def retag_books(book_ids, labels: bool = True) -> set[str]:
     """Map these books' site labels again (after a label fix), with their copies on other sites, and update the tag
-    counts. Returns the tags that changed."""
+    counts. labels=False only works out the rules again (after a parent or child link changed). Returns the tags
+    that changed."""
     ids, touched = sorted(set(book_ids)), set()
 
     def tags_of(c, chunk):
@@ -135,13 +155,14 @@ def retag_books(book_ids) -> set[str]:
         with db.transaction() as c:
             touched |= tags_of(c, chunk)
             for book_id in chunk:
-                _set_site_labels(c, book_id, _site_labels(c, book_id))
+                if labels:
+                    _set_site_labels(c, book_id, _site_labels(c, book_id))
                 _refresh_rules(c, book_id)
                 _drop_confirmed_maybes(c, book_id)
                 _recompute_pov(c, book_id)
             touched |= tags_of(c, chunk)
     works = set()
-    for i in range(0, len(ids), 500):
+    for i in range(0, len(ids) if labels else 0, 500):
         chunk = ids[i:i + 500]
         works |= {r[0] for r in db.conn().execute(
             f"SELECT DISTINCT work_id FROM books WHERE work_id IS NOT NULL AND id IN ({','.join('?' * len(chunk))})",
@@ -164,6 +185,34 @@ def retag_books(book_ids) -> set[str]:
                       f"AND NOT EXISTS (SELECT 1 FROM book_tags WHERE tag = tags.id)", chunk)
     _existing_tags.clear()
     return touched
+
+
+def refresh_rules_for(tag_ids) -> None:
+    """After a parent or child link changed: work out the implied tags again for every book with these tags."""
+    c = db.conn()
+    books = set()
+    for tag in set(tag_ids):
+        books |= {r[0] for r in c.execute("SELECT DISTINCT book_id FROM book_tags WHERE tag=?", (tag,))}
+    if books:
+        retag_books(books, labels=False)
+
+
+def sync_tag_rows(tag_ids) -> None:
+    """Bring the tags table in line with the tag list (names, category, shared or not) after an edit."""
+    with db.transaction() as c:
+        for tid in set(tag_ids):
+            i, known = T.info(tid), T.is_known(tid)
+            cat = i.get("category") or ("fandom" if tid.startswith(T.FANDOM_PREFIX) else "other")
+            if known:
+                c.execute("INSERT INTO tags(id, label, label_ru, label_uk, category, known) VALUES(?,?,?,?,?,1) "
+                          "ON CONFLICT(id) DO UPDATE SET label=excluded.label, label_ru=excluded.label_ru, "
+                          "label_uk=excluded.label_uk, category=excluded.category, known=1",
+                          (tid, i["label"], i.get("label_ru"), i.get("label_uk"), cat))
+            else:  # no longer a shared tag: back to the label as the site wrote it
+                raw = c.execute("SELECT raw FROM book_tags WHERE tag=? AND raw IS NOT NULL LIMIT 1", (tid,)).fetchone()
+                c.execute("UPDATE tags SET label=?, label_ru=NULL, label_uk=NULL, category=?, known=0 WHERE id=?",
+                          (raw[0] if raw else i["label"], cat, tid))
+    _existing_tags.clear()
 
 
 def _replace_maybe_tags(c, book_id: int, found: list[dict]):
@@ -304,7 +353,7 @@ def reapply_all_tags(progress=None):
         if progress and n % 500 == 0:
             progress(n, len(ids))
     with db.transaction() as tc:  # labels for tags that became known
-        for tid in T.TAGS:
+        for tid in T.all_ids():
             i = T.info(tid)
             tc.execute("UPDATE tags SET label=?, label_ru=?, label_uk=?, category=?, known=1 WHERE id=?",
                        (i["label"], i.get("label_ru"), i.get("label_uk"), i.get("category"), tid))

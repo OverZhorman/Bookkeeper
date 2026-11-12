@@ -9,6 +9,7 @@ Your own catalog of books and web novels from the sites you read. It merges ever
 - **Search by tags with simple logic**: `Romance −Harem`, `(Isekai | Reincarnation) Magic`, in any language, with suggestions as you type. Every tag has a page with its aliases, parent and child tags, related tags and anti-tags.
 - **Possible tags** found in the opening chapters (system messages, cultivation, dragons…), kept apart from the certain ones.
 - **Fix site labels in bulk**: labels Bookkeeper doesn't recognize are listed most common first, with suggestions. Say once what one means (or hide it) and every book with it follows.
+- **Edit any tag**: names in three languages, description, aliases, parent and child tags, anti-tags; or make tags of your own.
 - **Filter and sort by anything**: fanfiction and fandoms, orientation, age rating (G to NC-21), books not updated for a month or a year, and more. Keep shelves (want to read, reading, read, dropped, hidden), favourites and notes.
 - **Downloads** books as **EPUB, FB2 or TXT** for your e-reader. Logged in, downloads include the chapters you bought.
 - **Logs in for you**, and can hand a book to a browser extension such as ExLoader.
@@ -92,7 +93,7 @@ You can filter by each of these sources.
 |---|---|
 | RanobeLIB | ✅ Working |
 | Author.Today | ✅ Working. Chapter text is read through Microsoft Edge on your computer, because the site scrambles it for anything that isn't a browser |
-| Flibusta | ✅ Working. Downloads use Flibusta's own FB2/EPUB files |
+| Flibusta | ✅ Working: the whole library (over 700,000 books) from Flibusta's catalog file, then genres page by page and descriptions in the background. Pick the languages in the site's settings (Russian, Ukrainian, Belarusian and English to begin with). Downloads use Flibusta's own FB2/EPUB files |
 | Litnet | ✅ Working (Russian and Ukrainian books) |
 | Wuxia.click | ✅ Working (English translations, with NovelUpdates-style tags) |
 | Wattpad | ✅ Working. Wattpad is too big to collect whole, so Bookkeeper collects the results of your search terms (Sites → Wattpad → Settings) |
@@ -149,19 +150,43 @@ Some labels from the sites aren't one of Bookkeeper's shared tags: Wattpad hasht
 - **suggestions**: one click says the label means that tag («саске» → Naruto, «ковры на стенах» → Back to the USSR);
 - **Means… type a tag** for anything else, and **+ another tag** when a label means two things («попаданцы в магический мир» → Isekai + Magic);
 - **Hide** for junk labels (site names, years), which removes them from every book;
+- **Leave as is** for labels that are fine as their own tag, which takes them off the list;
 - **Undo**, which puts a label back the way Bookkeeper read it before.
 
 A fix applies to every book with that label, written any way («Попаданиевдругоймир», «#попаданиевдругоймир»), and to books that arrive later. When Bookkeeper maps a label to the wrong tag, press ✎ next to it under "Written on the sites as" on the tag's page. Fixes are saved in the `[fixes]` table of `data\my_tags.toml`; **My fixes** lists them all.
 
+### Fixing labels with an AI chat
+
+Thousands of labels are a lot to fix by hand, so an AI chat (Gemini, ChatGPT, …) can do the reading, on your own subscription and without any API key:
+
+1. On **Fix site labels**, press **✨ Fix with an AI chat**, pick a batch size (250 labels is about 70,000 characters) and press **Copy the request**. It holds the most common labels (with the site and search filters you picked), what their books usually have and a few titles, the list of shared tags, and instructions.
+2. Paste it into the chat and send it, or use **Download as a file** and attach the file. The chat answers with one line per label: which shared tags it means, hide it, leave it as it is, or a new tag it suggests.
+3. Copy the chat's whole reply into step 2 and press **Check the answers**. You see every answer first; ones Bookkeeper can't use (an unknown tag, a label that isn't in your library) are left out, and you can untick any others.
+4. **Apply** fixes them all at once. They leave the list, so the next **Copy the request** brings the next batch.
+
+Each import can be undone as a whole: right after it, or later under **My fixes**. An import never touches the names of shared tags, only labels that are still unrecognized.
+
+## Editing tags
+
+Open **Tags** in the top bar and click a tag, then **✎ Edit tag**. There you can change:
+
+- its names in English, Russian and Ukrainian, its category and its description;
+- its **aliases**: other names a site might use. Every book with a label written that way gets the tag;
+- its **parent tags** (broader tags every book with it also gets) and **child tags** (narrower tags that can't appear without it);
+- its **anti-tags** (tags that contradict it).
+
+Every change is saved at once and applies to every book. **Undo all my changes** puts one of Bookkeeper's own tags back. **+ New tag** on the Tags page makes a tag of your own, and on an unrecognized label's page **Make it a shared tag** turns that label into one (its other spellings join it). Tags you made can be deleted.
+
 ## Your own tags and rules
 
-Open `data\my_tags.toml` in Notepad. It is created on the first start and explains itself. You can:
+Everything you change in the interface is saved in `data\my_tags.toml`, so it survives updates. You can also edit that file in Notepad; it explains itself:
 
-- map site labels to tags (`"попаданец в зомби-апокалипсис" = ["isekai", "undead", "apocalypse"]`);
-- add rules (`"harem" = ["romance"]`);
-- add or rename tags.
+- `[synonyms]` and `[fixes]`: what site labels mean (`"попаданец в зомби-апокалипсис" = ["isekai", "undead", "apocalypse"]`);
+- `[rules]`: parent tags (`"harem" = ["romance"]`), and `[rules_off]` to switch one of Bookkeeper's own off;
+- `[anti]` and `[anti_off]`: anti-tags;
+- `[tags.<id>]`: names, category and description of a tag.
 
-Then press **Re-apply my tag rules** on the Sites page.
+After editing the file by hand, press **Re-apply my tag rules** on the Sites page.
 
 ## Your data
 
@@ -208,6 +233,7 @@ Code layout (`src/bookkeeper/`):
 - `tags.py`, `tagdata.py`, `tagdocs.py`: the shared tag list (English, Russian and Ukrainian names), synonyms, rules, descriptions and anti-tags.
 - `tagquery.py`: the tag search language. `search.py`: library filters, suggestions and tag pages.
 - `labels.py`: fixing site labels for every book at once (the Fix site labels page).
+- `tagedit.py`: editing tags from their pages (saved in `data/my_tags.toml`).
 - `browser.py`: Waterfox (WebDriver BiDi) and Edge (Playwright).
 - `accounts.py`, `secret.py`: logins, saved passwords and sessions (encrypted with Windows DPAPI).
 - `handoff.py`: picking up books downloaded with a browser extension.

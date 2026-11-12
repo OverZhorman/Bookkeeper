@@ -10,6 +10,7 @@ Rules then add implied tags: a LitRPG book also gets "RPG / game elements", a ro
 import json
 import os
 import re
+import threading
 import tomllib
 from functools import lru_cache
 
@@ -419,10 +420,10 @@ def _tables():
     user = _user_config()
     info = {tid: {"label": en, "label_ru": ru, "label_uk": UK.get(tid), "category": cat}
             for tid, (en, ru, cat, _) in TAGS.items()}
-    for tid, extra in (user.get("tags") or {}).items():
-        if isinstance(extra, dict):
-            base = info.setdefault(tid, {"label": tid, "label_ru": None, "label_uk": None, "category": "other"})
-            base.update({k: v for k, v in extra.items() if k in ("label", "label_ru", "label_uk", "category")})
+    user_tags = {tid: extra for tid, extra in (user.get("tags") or {}).items() if isinstance(extra, dict)}
+    for tid, extra in user_tags.items():
+        base = info.setdefault(tid, {"label": tid, "label_ru": None, "label_uk": None, "category": "other"})
+        base.update({k: v for k, v in extra.items() if k in ("label", "label_ru", "label_uk", "category") and v})
     syn: dict[str, list[str]] = {}
     for tid, (en, ru, _cat, synonyms) in TAGS.items():
         for s in [tid, en, ru, UK.get(tid) or "", *synonyms]:
@@ -430,19 +431,51 @@ def _tables():
                 syn.setdefault(key(s), [tid])
     for label, ids in COMPOUND.items():
         syn[key(label)] = list(ids)
+    for tid, extra in user_tags.items():  # the names you give a tag mean it
+        syn.setdefault(key(tid), [tid])
+        for field in ("label", "label_ru", "label_uk"):
+            if isinstance(extra.get(field), str) and key(extra[field]):
+                syn[key(extra[field])] = [tid]
     for label, ids in (user.get("synonyms") or {}).items():
-        syn[key(label)] = [ids] if isinstance(ids, str) else list(ids)
+        syn[key(label)] = _as_list(ids)
     for label, ids in (user.get("fixes") or {}).items():  # made on the Fix labels page; they win
-        syn[key(label)] = [ids] if isinstance(ids, str) else list(ids)
+        syn[key(label)] = _as_list(ids)
     rules = {k: list(v) for k, v in RULES.items()}
     for k, v in (user.get("rules") or {}).items():
         rules.setdefault(k, [])
-        rules[k] += [v] if isinstance(v, str) else list(v)
+        rules[k] += [x for x in _as_list(v) if x not in rules[k]]
+    for k, v in (user.get("rules_off") or {}).items():  # Bookkeeper's own rules you switched off
+        if k in rules:
+            rules[k] = [x for x in rules[k] if x not in _as_list(v)]
     return syn, rules, info
+
+
+def _as_list(value) -> list[str]:
+    return [value] if isinstance(value, str) else [str(x) for x in value or []]
+
+
+@lru_cache(maxsize=1)
+def _extras() -> tuple[set, dict[str, str]]:
+    """(anti-tag pairs, descriptions): Bookkeeper's plus my_tags.toml's [anti], [anti_off] and descriptions."""
+    user = _user_config()
+    pairs = {frozenset((a, b)) for a, bs in ANTI.items() for b in bs if a != b}
+    pairs |= {frozenset((a, b)) for a, bs in (user.get("anti") or {}).items() for b in _as_list(bs) if a != b}
+    pairs -= {frozenset((a, b)) for a, bs in (user.get("anti_off") or {}).items() for b in _as_list(bs)}
+    descriptions = dict(DESCRIPTIONS)
+    for tid, extra in (user.get("tags") or {}).items():
+        if isinstance(extra, dict) and isinstance(extra.get("description"), str) and extra["description"].strip():
+            descriptions[tid] = extra["description"].strip()
+    return pairs, descriptions
+
+
+def user_config() -> dict:
+    """my_tags.toml as it is now ({} if it's missing or has a mistake)."""
+    return _user_config()
 
 
 def reload() -> None:
     _tables.cache_clear()
+    _extras.cache_clear()
     _children_index.cache_clear()
     _alias_index.cache_clear()
 
@@ -555,43 +588,54 @@ def child_tree(tag_id: str, _path: tuple = ()) -> list[dict]:
 
 def anti(tag_id: str) -> list[str]:
     """Tags that contradict this one."""
-    out = list(ANTI.get(tag_id, []))
-    out += [t for t, others in ANTI.items() if tag_id in others and t not in out]
-    return out
+    return sorted({t for pair in _extras()[0] if tag_id in pair for t in pair if t != tag_id})
 
 
 def describe(tag_id: str) -> str | None:
-    return DESCRIPTIONS.get(tag_id)
+    return _extras()[1].get(tag_id)
 
 
 @lru_cache(maxsize=1)
 def _alias_index() -> tuple[dict[str, list[str]], dict[str, list[tuple[str, list[str]]]]]:
-    """(tag id -> every way it's written: names in three languages and synonyms,
+    """(tag id -> every way of writing it that means just that tag, your synonyms and fixes included,
         tag id -> site labels that mean it together with other tags: "магический детектив" = Fantasy + Mystery)."""
+    syn, _, _ = _tables()
+    user = _user_config()
+    written: dict[str, str] = {}  # key -> one way of writing it
+
+    def add(text, prefer=False):
+        k = key(text) if isinstance(text, str) else ""
+        if k and (prefer or k not in written):
+            written[k] = text
+    for tid, (en, ru, _cat, synonyms) in TAGS.items():
+        for s in (en, ru, UK.get(tid) or "", *synonyms):
+            add(s)
+    for label in COMPOUND:
+        add(label)
+    for table in ("synonyms", "fixes"):
+        for label in user.get(table) or {}:
+            add(label, prefer=True)  # as you wrote it
     names: dict[str, list[str]] = {}
     combos: dict[str, list[tuple[str, list[str]]]] = {}
-    for tid, (en, ru, _cat, synonyms) in TAGS.items():
-        names[tid] = [a for a in dict.fromkeys([en, ru, UK.get(tid) or "", *synonyms]) if a]
-    for label, ids in COMPOUND.items():
+    for k, text in written.items():
+        ids = syn.get(k) or []
         if len(ids) == 1:
-            if ids[0] in names and label not in names[ids[0]]:
-                names[ids[0]].append(label)
-            continue
-        for t in ids:
-            combos.setdefault(t, []).append((label, [x for x in ids if x != t]))
+            names.setdefault(ids[0], []).append(text)
+        else:
+            for t in ids:
+                combos.setdefault(t, []).append((text, [x for x in ids if x != t]))
     return names, combos
+
+
+def own_names(tag_id: str) -> list[str]:
+    i = info(tag_id)
+    return [n for n in (i.get("label"), i.get("label_ru"), i.get("label_uk")) if n]
 
 
 def aliases(tag_id: str) -> list[str]:
     """Other names for the tag (not its own names in the three languages)."""
-    i = info(tag_id)
-    own = {key(x) for x in (i.get("label"), i.get("label_ru"), i.get("label_uk")) if x}
-    out, seen = [], set(own)
-    for a in _alias_index()[0].get(tag_id, []):
-        if key(a) not in seen:  # one spelling per name: "LitRPG", "litrpg" and "Lit-RPG" are the same
-            seen.add(key(a))
-            out.append(a)
-    return out
+    own = {key(n) for n in [*own_names(tag_id), tag_id]}
+    return [a for a in _alias_index()[0].get(tag_id, []) if key(a) not in own]
 
 
 def combined(tag_id: str) -> list[tuple[str, list[str]]]:
@@ -601,17 +645,18 @@ def combined(tag_id: str) -> list[tuple[str, list[str]]]:
 
 def suggest(text: str, category: str | None = None, limit: int = 15) -> list[tuple[str, str, int]]:
     """Known tags matching `text`: [(tag id, the name or alias that matched, rank)]. Rank 0: one of the tag's own
-    names starts with it; 1: a synonym starts with it; 2 and 3: they contain it."""
+    names starts with it; 1: an alias starts with it; 2 and 3: they contain it."""
     k = key(text)
     if not k:
         return []
     found = []
-    for tid, (en, ru, cat, synonyms) in TAGS.items():
-        if category and info(tid)["category"] != category:
+    alias_names = _alias_index()[0]
+    for tid, i in _tables()[2].items():
+        if category and i.get("category") != category:
             continue
         best = None
-        for rank_start, rank_contains, names in ((0, 2, [en, ru, UK.get(tid) or ""]), (1, 3, synonyms)):
-            for name in names:
+        for rank_start, rank_contains, names_ in ((0, 2, own_names(tid)), (1, 3, alias_names.get(tid, []))):
+            for name in names_:
                 nk = key(name)
                 if not nk:
                     continue
@@ -654,7 +699,8 @@ def all_ids() -> list[str]:
 POV_TAGS = {"pov-first": "first", "pov-third": "third", "pov-second": "second"}
 
 USER_FILE_TEMPLATE = """\
-# Your own tag settings. Bookkeeper reads this file when it starts.
+# Your own tag settings. Bookkeeper reads this file when it starts. Most of it can also be changed in
+# Bookkeeper itself: Tags > a tag > Edit tag, and Tags > Fix site labels (they save their changes here).
 # Tag ids are the short English names you see in the address bar when you filter by a tag,
 # e.g. "litrpg", "pov-first", "isekai". Unknown site labels are their own tag (lowercase label).
 
@@ -662,15 +708,27 @@ USER_FILE_TEMPLATE = """\
 [synonyms]
 # "попаданец в зомби-апокалипсис" = ["isekai", "undead", "apocalypse"]
 
-# Rules: every book with the tag on the left also gets the tags on the right.
+# Rules: every book with the tag on the left also gets the tags on the right (its parent tags).
 [rules]
 # "harem" = ["romance"]
 
-# Add or rename tags:
+# Switch off one of Bookkeeper's own rules:
+# [rules_off]
+# "litrpg" = ["gamelit"]
+
+# Tags that contradict each other (anti-tags), and Bookkeeper's own anti-tags switched off:
+# [anti]
+# "isekai" = ["slice-of-life"]
+# [anti_off]
+# "harem" = ["no-harem"]
+
+# Add or rename tags, with a description:
 # [tags.my-favourite-trope]
 # label = "My favourite trope"
 # label_ru = "Мой любимый троп"
+# label_uk = "Мій улюблений троп"
 # category = "theme"
+# description = "What it means, in a sentence or two."
 """
 
 
@@ -693,44 +751,104 @@ FIXES_HEADER = (
     "# Labels you fixed on Bookkeeper's \"Fix labels\" page: the label on the left means the tags on the right,\n"
     "# for every book. [] hides the label. Bookkeeper rewrites this table when you fix a label there; you can\n"
     "# also edit it here (then press \"Re-apply my tag rules\" on the Sites page).\n")
+# Notes written above a table when Bookkeeper adds it to the file.
+TABLE_NOTES = {
+    ("fixes",): FIXES_HEADER,
+    ("rules_off",): "# Bookkeeper's own rules you switched off: the tag on the left no longer brings the tags on the right.\n",
+    ("anti",): "# Tags that contradict each other (anti-tags), besides Bookkeeper's own.\n",
+    ("anti_off",): "# Bookkeeper's own anti-tags you switched off.\n",
+}
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+_FILE_LOCK = threading.RLock()
 
 
 def _toml_str(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)  # a JSON string is a valid TOML string
 
 
-def set_fix(label: str, ids: list[str] | None) -> None:
-    """Save what a site label means (None removes the fix) in my_tags.toml's [fixes] table. The rest of the file,
-    your comments included, stays as it is. Call reload() afterwards."""
-    path = config.USER_TAGS_FILE
-    text = path.read_text(encoding="utf-8") if path.exists() else USER_FILE_TEMPLATE
+def _toml_key(k: str) -> str:
+    return k if _BARE_KEY.fullmatch(k) else _toml_str(k)
+
+
+def _toml_value(v) -> str:
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_str(str(x)) for x in v) + "]"
+    return _toml_str(str(v))
+
+
+def _header_path(line: str) -> tuple | None:
+    """("tags", "my-tag") for a line [tags.my-tag]; None for anything that isn't a table header."""
+    s = line.strip()
+    if not s.startswith("[") or s.startswith("[["):
+        return None
     try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"my_tags.toml has a mistake ({e}). Fix it in Notepad first.") from e
-    current = {k: ([v] if isinstance(v, str) else list(v)) for k, v in (data.get("fixes") or {}).items()}
-    wanted = {name: v for name, v in current.items() if key(name) != key(label)}
-    if ids is not None:
-        wanted[label.strip()] = list(dict.fromkeys(ids))
-    body = "".join(f"{_toml_str(name)} = [{', '.join(_toml_str(t) for t in v)}]\n"
-                   for name, v in sorted(wanted.items(), key=lambda kv: key(kv[0])))
+        d = tomllib.loads(s)
+    except tomllib.TOMLDecodeError:
+        return None
+    path = []
+    while isinstance(d, dict) and len(d) == 1:
+        k, d = next(iter(d.items()))
+        path.append(k)
+    return tuple(path) or None
+
+
+def _rewrite_table(text: str, path: tuple, contents: dict | None) -> str:
     lines = text.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if line.split("#")[0].strip() == "[fixes]"), None)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    heads = [i for i, line in enumerate(lines) if _header_path(line)]
+    start = next((i for i in heads if _header_path(lines[i]) == path), None)
+    body = "".join(f"{_toml_key(k)} = {_toml_value(v)}\n" for k, v in (contents or {}).items())
     if start is None:
-        new = text + ("" if not text or text.endswith("\n") else "\n") + "\n" + FIXES_HEADER + "[fixes]\n" + body
-    else:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
-        tail = end
-        while end < len(lines) and tail > start + 1 and lines[tail - 1].lstrip().startswith("#"):
-            tail -= 1  # comments right above the next table belong to it
-        new = "".join(lines[:start + 1]) + body + ("\n" if end < len(lines) else "") + "".join(lines[tail:])
-    check = tomllib.loads(new)  # never write a file Bookkeeper couldn't read back
-    if {key(k) for k in check.get("fixes") or {}} != {key(k) for k in wanted}:
-        raise ValueError("my_tags.toml couldn't be updated safely; edit its [fixes] table in Notepad")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(new, encoding="utf-8")
-    os.replace(tmp, path)
+        if not contents:
+            return "".join(lines)
+        header = "[" + ".".join(_toml_key(k) for k in path) + "]\n"
+        return "".join(lines) + "\n" + TABLE_NOTES.get(path, "") + header + body
+    end = next((i for i in heads if i > start), len(lines))
+    top = start + 1
+    while top < end and lines[top].lstrip().startswith("#"):  # an explanation or example right under the header
+        top += 1
+    tail = end
+    while end < len(lines) and tail > top and lines[tail - 1].lstrip().startswith("#"):
+        tail -= 1  # comments right above the next table belong to it
+    if contents is None:
+        return "".join(lines[:start] + lines[tail:])
+    return "".join(lines[:top]) + body + ("\n" if end < len(lines) else "") + "".join(lines[tail:])
+
+
+def write_tables(changes: dict[tuple, dict | None]) -> None:
+    """Rewrite whole tables of my_tags.toml, e.g. {("rules",): {...}, ("tags", "my-tag"): {...} or None to remove
+    it}. The rest of the file, your comments included, stays as it is. Call reload() afterwards."""
+    with _FILE_LOCK:
+        path = config.USER_TAGS_FILE
+        text = path.read_text(encoding="utf-8") if path.exists() else USER_FILE_TEMPLATE
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            raise ValueError(f"my_tags.toml has a mistake ({e}). Fix it in Notepad first.") from e
+        for table, contents in changes.items():
+            text = _rewrite_table(text, table, contents)
+        data = tomllib.loads(text)  # never write a file Bookkeeper couldn't read back
+        for table, contents in changes.items():
+            got = data
+            for k in table:
+                got = got.get(k, {}) if isinstance(got, dict) else {}
+            want = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in (contents or {}).items()}
+            if got != want:
+                raise ValueError("my_tags.toml couldn't be updated safely; edit it in Notepad instead")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
+
+def set_fix(label: str, ids: list[str] | None) -> None:
+    """Save what a site label means (None removes the fix) in my_tags.toml's [fixes] table. Call reload() after."""
+    with _FILE_LOCK:
+        wanted = {name: v for name, v in fixes().items() if key(name) != key(label)}
+        if ids is not None:
+            wanted[label.strip()] = list(dict.fromkeys(ids))
+        write_tables({("fixes",): dict(sorted(wanted.items(), key=lambda kv: key(kv[0])))})
 
 
 def ensure_user_file() -> None:
