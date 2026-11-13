@@ -490,7 +490,8 @@ def tag_page(tag_id: str) -> dict:
     d["children_tree"] = tree(T.child_tree(tag_id))
     family = {tag_id, *T.ancestors(tag_id), *T.descendants(tag_id)}
     d["anti"] = _brief(c, T.anti(tag_id))
-    related, rarely = _cooccurrence(c, tag_id, family | set(T.anti(tag_id)))
+    d["see_also"] = _brief(c, T.related(tag_id))
+    related, rarely = _cooccurrence(c, tag_id, family | set(T.anti(tag_id)) | set(T.related(tag_id)))
     d["related"], d["rarely"] = related, rarely
     # Label fixes (see labels.py): this label's own fix, and the labels you fixed to mean this tag.
     fx, k = T.fixes(), T.key(d.get("label") or tag_id)

@@ -41,7 +41,7 @@ class Ranobes(Site):
     name = "Ranobes"
     home = BASE
     lang = "ru"
-    min_interval = 1.5
+    min_interval = 4.0  # "access temporarily restricted" at 1.5 s (2026-11)
     note = "Russian translations of Asian novels, with NovelUpdates-style tags (in Russian)."
 
     # ----- catalog

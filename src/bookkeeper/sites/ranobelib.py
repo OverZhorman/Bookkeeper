@@ -47,7 +47,7 @@ class RanobeLib(Site):
     name = "RanobeLIB"
     home = "https://ranobelib.me"
     lang = "ru"
-    min_interval = 1.0
+    min_interval = 2.5  # the site blocked faster reading (DDoS-Guard, 2026-11)
     note = "Reads the site's own data feed. The site shows some 18+ titles only to logged-in readers."
     lists_adult = True
     age_rescan = True

@@ -1209,7 +1209,7 @@ async function renderTag(id) {
       t.editable ? h("a", { class: `btn small ${editing ? "primary" : ""}`, href: tagHref(t.id) + (editing ? "" : "&edit=1"),
         title: editing ? "Back to reading" : "Change its names, description, aliases, parent and child tags, anti-tags" }, editing ? "✓ Done editing" : "✎ Edit tag") : null,
       t.editable ? h("a", { class: "btn small", href: "#/tags?" + toQuery({ ai: t.id }),
-        title: "Let Gemini, ChatGPT or another AI chat sort this tag's aliases into child tags and fix its links" }, "✨ Improve with an AI chat") : null),
+        title: "Let Gemini, ChatGPT or another AI chat sort this tag's aliases into child tags, add aliases and fix its names, description and links" }, "✨ Improve with an AI chat") : null),
     h("div", { class: "names" }, [["English", t.label], ["Русский", t.label_ru], ["Українська", t.label_uk]].filter(([, v]) => v).map(([k, v]) =>
       h("span", {}, h("span", { class: "faint" }, `${k}: `), v))),
     t.description ? h("p", { class: "lead" }, t.description)
@@ -1255,14 +1255,16 @@ async function renderTag(id) {
         h("div", { class: "addrow" }, aliasInput, h("button", { class: "btn small", onclick: addAlias }, "Add")))),
       sec("Parent tags", `broader tags every “${name}” book also gets`, linkEditor(t.parents_all, "parent", "+ add a broader tag…")),
       sec("Child tags", `narrower tags that can't appear without “${name}”`, linkEditor(t.children_direct, "child", "+ add a narrower tag…")),
-      sec("Anti-tags", `tags that contradict “${name}”`, linkEditor(t.anti, "anti", "+ add a contradicting tag…")));
+      sec("Anti-tags", `tags that contradict “${name}”`, linkEditor(t.anti, "anti", "+ add a contradicting tag…")),
+      sec("See also", "related tags worth a look from here; they don't change any book's tags", linkEditor(t.see_also || [], "related", "+ add a related tag…")));
   } else {
     view.push(
       sec("Aliases", "other names that mean the same", numbered(t.aliases, (a) => a, "cols")),
       sec("Parent tags", `broader tags every “${name}” book also gets`, numbered(t.parents, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
       t.ancestors.length ? h("div", { class: "further" }, "Further up: ", t.ancestors.map((x, i) => [i ? ", " : "", tagLink(x)])) : null,
       sec("Child tags", `narrower tags that can't appear without “${name}”`, t.children_tree.length ? treeList(t.children_tree) : h("p", { class: "faint" }, "—")),
-      sec("Anti-tags", `tags that contradict “${name}”`, numbered(t.anti, (x) => h("span", {}, tagLink(x), countOf(x.books)))));
+      sec("Anti-tags", `tags that contradict “${name}”`, numbered(t.anti, (x) => h("span", {}, tagLink(x), countOf(x.books)))),
+      t.see_also && t.see_also.length ? sec("See also", `related tags linked to “${name}”`, numbered(t.see_also, (x) => h("span", {}, tagLink(x), countOf(x.books)))) : null);
   }
   view.push(
     sec("Related tags", `tags that usually appear with “${name}” in your library`,
@@ -1577,7 +1579,8 @@ function aiPanel(getFilters, onApplied) {
 
 // Improving shared tags with an AI chat: their aliases become child tags, wrong ones move, links get fixed.
 const LINK_WORDS = { parent: ["is a child of", "is no longer a child of"], child: ["gets the child tag", "loses the child tag"],
-  anti: ["contradicts", "no longer contradicts"], tag: ["", ""] };
+  anti: ["contradicts", "no longer contradicts"], related: ["is related to (see also)", "is no longer related to"], tag: ["", ""] };
+const FIELD_WORDS = { label: "English name", label_ru: "Russian name", label_uk: "Ukrainian name", category: "category", description: "description" };
 function tagAiPanel(startQ) {
   const q = h("input", { class: "input small", value: startQ || "", placeholder: "Which tags: names or ids, separated by commas (empty: most aliases first)", style: { minWidth: "320px", flex: "1" } });
   const cat = h("select", { class: "input", style: { width: "auto" } }, h("option", { value: "" }, "All categories but fandoms"),
@@ -1613,14 +1616,14 @@ function tagAiPanel(startQ) {
   };
   const names = (list) => list.map((t, i) => [i ? " + " : "", t.label]);
   const undo = async (id) => {
-    if (!confirm("Undo this whole import? Its aliases and links go back to how they were, and the tags it made are deleted.")) return;
+    if (!confirm("Undo this whole import? Its aliases, links, names and descriptions go back to how they were, and the tags it made are deleted.")) return;
     try { await api.post("/api/tagai/undo", { id }); toast("Import undone"); tagCache.clear(); fill(preview); loadHistory(); }
     catch (e) { toast(String(e.message || e)); }
   };
   const drawPreview = (r) => {
     const c = r.counts;
     const newChecks = r.new_tags.map((t) => ({ t, box: h("input", { type: "checkbox", checked: !t.problem && t.used_by > 0, disabled: !!t.problem }) }));
-    const rows = [...r.aliases, ...r.links].map((it) => ({ it, box: h("input", { type: "checkbox", checked: !it.problem, disabled: !!it.problem }) }));
+    const rows = [...r.edits, ...r.aliases, ...r.links].map((it) => ({ it, box: h("input", { type: "checkbox", checked: !it.problem, disabled: !!it.problem }) }));
     const applyBtn = h("button", { class: "btn primary" });
     const result = h("span", {});
     const count = () => { applyBtn.textContent = `Apply ${rows.filter((x) => x.box.checked).length} changes`; };
@@ -1635,7 +1638,8 @@ function tagAiPanel(startQ) {
           new_tags: newChecks.filter((x) => x.box.checked).map((x) => x.t.id) });
         reply.value = "";
         tagCache.clear();
-        fill(preview, h("div", { class: "fixed" }, `✓ ${fmtNum(done.labels)} aliases moved, ${fmtNum(done.links)} links changed`,
+        fill(preview, h("div", { class: "fixed" }, `✓ ${fmtNum(done.labels)} aliases changed, ${fmtNum(done.links)} links changed`,
+          done.edits ? `, ${fmtNum(done.edits)} names and descriptions` : "",
           done.new_tags ? `, ${done.new_tags} new tag${done.new_tags === 1 ? "" : "s"}` : "", ` on ${booksText(done.books)}. `),
           done.import ? h("button", { class: "btn small ghost", onclick: () => undo(done.import) }, "Undo this import") : null,
           h("div", { class: "faint" }, `${done.reviewed} tag${done.reviewed === 1 ? "" : "s"} marked as reviewed: the next request brings the next ones.`));
@@ -1643,14 +1647,23 @@ function tagAiPanel(startQ) {
       } catch (e) { applyBtn.disabled = false; fill(result, h("span", { class: "warn" }, String(e.message || e))); }
     });
     const aliasRow = ({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
-      h("span", { class: "lname" }, it.label), it.before.length ? h("span", { class: "faint" }, names(it.before)) : null, h("span", { class: "arrow" }, "→"),
-      it.problem ? h("span", { class: "warn" }, it.problem) : it.action === "hide" ? h("span", { class: "muted" }, "hide from every book") : h("span", {}, names(it.tags)));
+      h("span", { class: "lname" }, it.label), it.new ? h("span", { class: "n", title: "No book has this label yet: it's a new alias, for books that arrive later" }, "new alias") : null,
+      it.before.length ? h("span", { class: "faint" }, names(it.before)) : null, h("span", { class: "arrow" }, "→"),
+      it.problem ? h("span", { class: "warn" }, it.problem) : it.action === "hide" ? h("span", { class: "muted" }, "hide from every book")
+        : it.action === "keep" ? h("span", { class: "muted" }, "a label of its own (no shared tag)") : h("span", {}, names(it.tags)));
+    const shown = (it, v) => it.field === "category" ? (CATS[v] || v) : v;
+    const editRow = ({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}`, title: it.field === "description" ? `Before: ${it.old || "no description"}` : "" }, box,
+      h("span", { class: "lname" }, it.label), h("span", { class: "muted" }, FIELD_WORDS[it.field] || it.field),
+      it.field !== "description" ? h("span", { class: "faint" }, it.old ? shown(it, it.old) : "—") : null, h("span", { class: "arrow" }, "→"),
+      it.problem ? h("span", { class: "warn" }, it.problem) : h("span", {}, shown(it, it.new)),
+      it.keep && !it.problem ? h("span", { class: "n" }, `“${it.keep}” stays an alias`) : null);
     const linkRow = ({ it, box }) => h("label", { class: `airow ${it.problem ? "bad" : ""}` }, box,
       h("span", { class: "lname" }, it.label), h("span", { class: it.on ? "" : "muted" }, (LINK_WORDS[it.kind] || ["", ""])[it.on ? 0 : 1]),
       it.other_label ? h("b", {}, it.other_label) : null, it.problem ? h("span", { class: "warn" }, `(${it.problem})`) : null);
-    const aRows = rows.filter((x) => "action" in x.it), lRows = rows.filter((x) => !("action" in x.it));
+    const aRows = rows.filter((x) => "action" in x.it), eRows = rows.filter((x) => "field" in x.it);
+    const lRows = rows.filter((x) => !("action" in x.it) && !("field" in x.it));
     fill(preview,
-      h("div", { class: "aisum" }, `${c.aliases} aliases to move, ${c.hide} to hide, ${c.links} link changes, ${c.new_tags} new tags`,
+      h("div", { class: "aisum" }, `${c.aliases} aliases to move, ${c.new_aliases} new aliases, ${c.keep + c.hide} to keep apart or hide, ${c.links} link changes, ${c.edits} names and descriptions, ${c.new_tags} new tags`,
         c.problems ? h("span", { class: "warn" }, `, ${c.problems} can't be used`) : null, ".",
         r.reviewed.length ? h("span", { class: "faint", title: r.reviewed.map((t) => t.label).join("\n") }, ` Reviewed: ${r.reviewed.length} tag${r.reviewed.length === 1 ? "" : "s"}.`) : null),
       newChecks.length ? h("div", { class: "ainew" }, h("b", {}, "New tags it suggests"), newChecks.map(({ t, box }) => h("label", { class: "check" }, box,
@@ -1660,6 +1673,7 @@ function tagAiPanel(startQ) {
           t.description ? h("span", { class: "faint" }, ` — ${t.description}`) : null,
           h("span", { class: "faint" }, t.problem ? ` (${t.problem})` : ` · ${t.used_by} alias${t.used_by === 1 ? "" : "es"}`),
           t.unknown && t.unknown.length ? h("span", { class: "warn" }, ` (no tag ${t.unknown.map((x) => `“${x}”`).join(", ")})`) : null)))) : null,
+      eRows.length ? h("div", { class: "airows", style: { marginBottom: "6px" } }, eRows.map(editRow)) : null,
       aRows.length ? h("div", { class: "airows" }, aRows.map(aliasRow)) : null,
       lRows.length ? h("div", { class: "airows", style: { marginTop: "6px" } }, lRows.map(linkRow)) : null,
       h("div", { class: "shelf", style: { marginTop: "8px" } }, applyBtn,
@@ -1672,14 +1686,14 @@ function tagAiPanel(startQ) {
     try { list = await api.get("/api/tagai/imports"); } catch { /* none shown */ }
     fill(past, list.length ? h("details", {}, h("summary", { class: "faint" }, `Earlier imports (${list.length})`),
       list.map((m) => h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()),
-        h("span", { class: "n" }, `${fmtNum(m.count)} aliases, ${fmtNum(m.link_count || 0)} links, ${booksText(m.books)}`),
+        h("span", { class: "n" }, `${fmtNum(m.count)} aliases, ${fmtNum(m.link_count || 0)} links, ${m.edit_count ? `${fmtNum(m.edit_count)} names and descriptions, ` : ""}${booksText(m.books)}`),
         m.new_tags && m.new_tags.length ? h("span", { class: "faint" }, `${m.new_tags.length} new tag${m.new_tags.length === 1 ? "" : "s"}`) : null,
         m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: () => undo(m.id) }, "Undo this import")))) : null);
   };
   loadHistory();
   return h("div", { class: "aibox" },
     h("h2", {}, "Improve tags with an AI chat"),
-    h("p", { class: "faint" }, "Many site labels became aliases of a broad tag though they name something narrower. The chat sorts them out: it suggests child tags (“Monster protagonist” under “Non-human lead”) and moves the aliases to them, moves or hides wrong aliases, and adds or removes parent, child and anti-tag links. Books keep the broad tag through the parent link. You check every change first, and a whole import can be undone."),
+    h("p", { class: "faint" }, "Many site labels became aliases of a broad tag though they name something narrower. The chat sorts them out: it suggests child tags (“Monster protagonist” under “Non-human lead”) and moves the aliases to them, moves, keeps apart or hides wrong aliases, adds new aliases and combined labels, fixes names, categories and descriptions, and adds or removes parent, child, anti-tag and related (“see also”) links. Books keep the broad tag through the parent link. You check every change first, and a whole import can be undone."),
     h("div", { class: "aistep" }, h("span", { class: "stepn" }, "1"), h("div", {},
       h("div", { class: "shelf" }, q, cat),
       h("div", { class: "shelf", style: { marginTop: "6px" } }, limit,

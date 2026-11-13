@@ -10,6 +10,7 @@ import urllib.parse
 
 from ..analysis.text import clean_text, html_to_text
 from ..browser import BrowserUnavailable
+from ..http import NotFound
 from .base import BookInfo, Chapter, Site, SiteError, TemporaryError
 
 BASE = "https://author.today"
@@ -138,7 +139,18 @@ class AuthorToday(Site):
             state["i"], state["page"] = 0, 1
         while state["i"] < len(state["queue"]):
             genre, sorting = state["queue"][state["i"]]
-            books = self._listing(genre, sorting, state["page"])
+            try:
+                books = self._listing(genre, sorting, state["page"])
+            except NotFound:
+                # A listing that got shorter, or a genre the site dropped. The site sometimes answers "not found"
+                # for a moment too, so this page is tried three times (five minutes apart) before moving on.
+                at = [state["i"], state["page"]]
+                miss = state.get("missing") or {}
+                state["missing"] = {"at": at, "n": miss.get("n", 0) + 1 if miss.get("at") == at else 1}
+                if state["missing"]["n"] < 3:
+                    raise
+                books = []
+            state.pop("missing", None)
             if books:
                 known = {g for g, _ in state["queue"]}
                 for b in books:

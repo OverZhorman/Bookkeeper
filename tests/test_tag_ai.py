@@ -144,3 +144,91 @@ def test_label_import_new_tag_with_parent(lib):
     labels.undo_import(r["import"])
     assert not T.is_known("slime-lead") and "гг слизень" in _all(db, a)
     assert not (T.user_config().get("rules") or {})
+
+
+NAMES_REPLY = "\n".join([
+    '{"tag": "nonhuman-lead", "en": "Non-human protagonist", "uk": "Нелюдський головний герой", '
+    '"description": "The main character isn\'t human.", "category": "nonsense", "add_related": ["isekai", "magic"], '
+    '"add_aliases": ["Spider MC", "нечеловек-гг", "ГГ не человек"]}',
+    '{"tag": "harem", "en": "Fantasy", "ru": "гг паук"}',
+    '{"tag": "slime-lead", "en": "Slime protagonist"}',
+    '{"tag": "isekai", "remove_related": ["magic"], "add_related": ["into-game"]}',
+    '{"alias": "monster protagonist", "keep": true}',
+    '{"alias": "brand new label", "hide": true}',
+    '{"alias": "магический детектив новый", "tags": ["magic", "mystery"]}',
+])
+
+
+def test_names_descriptions_new_aliases_and_related(lib):
+    db, T, library, labels, tagai = lib
+    from bookkeeper import search, tagedit
+    a = _book(library, 1, ["Spider MC"])            # a label no shared tag knows
+    b = _book(library, 2, ["Monster protagonist"])  # an alias of Non-human lead
+    s = _book(library, 3, ["Slime hero"])
+    tagedit.edit(tagedit.create({"label": "Slime lead", "category": "protagonist"}), {"label": "Slime hero"})
+    library.refresh_tag_counts()
+    path = T.config.USER_TAGS_FILE
+    before = path.read_text(encoding="utf-8")
+    assert "nonhuman-lead" in _all(db, b) and "slime-lead" in _all(db, s)
+
+    p = tagai.check(NAMES_REPLY)
+    ed = {(x["tag"], x["field"]): x for x in p["edits"]}
+    assert not ed[("nonhuman-lead", "label")]["problem"] and not ed[("nonhuman-lead", "label")]["keep"]  # a built-in name stays anyway
+    assert not ed[("nonhuman-lead", "description")]["problem"] and not ed[("nonhuman-lead", "label_uk")]["problem"]
+    assert "no category" in ed[("nonhuman-lead", "category")]["problem"]
+    assert "name of" in ed[("harem", "label")]["problem"]                  # Fantasy's own name
+    assert "already means" in ed[("harem", "label_ru")]["problem"]         # Non-human lead's alias
+    assert ed[("slime-lead", "label")]["keep"] == "Slime hero"             # your tag's old name stays an alias
+    al = {x["label"]: x for x in p["aliases"]}
+    assert al["Spider MC"]["ids"] == ["nonhuman-lead"] and not al["Spider MC"]["new"]
+    assert al["нечеловек-гг"]["new"] and not al["нечеловек-гг"]["problem"]  # no book has it yet
+    assert "ГГ не человек" not in al                                        # the tag's own name: nothing to do
+    assert al["monster protagonist"]["action"] == "keep"
+    assert al["brand new label"]["problem"]                                 # nothing to hide
+    assert al["магический детектив новый"]["ids"] == ["magic", "mystery"] and al["магический детектив новый"]["new"]
+    ln = {(x["kind"], x["tag"], x["other"], x["on"]): x for x in p["links"]}
+    assert not ln[("related", "nonhuman-lead", "isekai", True)]["problem"]
+    assert "not related now" in ln[("related", "isekai", "magic", False)]["problem"]
+    assert "same family" in ln[("related", "isekai", "into-game", True)]["problem"]
+
+    r = tagai.apply(NAMES_REPLY)
+    assert r["edits"] == 4
+    assert T.info("nonhuman-lead")["label"] == "Non-human protagonist"
+    assert T.info("nonhuman-lead")["label_uk"] == "Нелюдський головний герой"
+    assert T.describe("nonhuman-lead") == "The main character isn't human."
+    assert T.canonical("Non-human lead") == ["nonhuman-lead"]
+    assert T.info("slime-lead")["label"] == "Slime protagonist" and T.canonical("Slime hero") == ["slime-lead"]
+    assert "slime-lead" in _all(db, s)
+    assert T.related("nonhuman-lead") == ["isekai", "magic"] and T.related("isekai") == ["nonhuman-lead"]
+    assert "nonhuman-lead" in _all(db, a)
+    assert T.canonical("нечеловек-гг") == ["nonhuman-lead"]
+    assert T.canonical("магический детектив новый") == ["magic", "mystery"]
+    assert "nonhuman-lead" not in _all(db, b) and "monster protagonist" in _all(db, b)
+    page = search.tag_page("nonhuman-lead")
+    assert [x["id"] for x in page["see_also"]] == ["isekai", "magic"]
+    assert "isekai" not in [x["id"] for x in page["related"]]
+    assert [x["edit_count"] for x in tagai.imports()] == [4]
+
+    tagai.undo(r["import"])
+    assert T.info("nonhuman-lead")["label"] == "Non-human lead" and T.describe("nonhuman-lead") != "The main character isn't human."
+    assert T.info("slime-lead")["label"] == "Slime hero"
+    assert T.related("nonhuman-lead") == []
+    assert "nonhuman-lead" not in _all(db, a) and "nonhuman-lead" in _all(db, b)
+    assert T.canonical("нечеловек-гг") != ["nonhuman-lead"]
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_related_links_by_hand(lib):
+    db, T, library, labels, tagai = lib
+    from bookkeeper import tagedit
+    tagedit.link("related", "harem", "comedy", True)
+    assert T.related("harem") == ["comedy"] and T.related("comedy") == ["harem"]
+    assert tagedit.has_changes("comedy")
+    with pytest.raises(ValueError):
+        tagedit.link("related", "isekai", "into-game", True)  # a child: its page shows it already
+    tagedit.link("related", "comedy", "harem", False)          # either side removes the pair
+    assert T.related("harem") == []
+    mine = tagedit.create({"label": "Slime lead", "category": "protagonist"})
+    tagedit.link("related", mine, "harem", True)
+    tagedit.delete(mine)
+    assert T.related("harem") == [] and not (T.user_config().get("related") or {})

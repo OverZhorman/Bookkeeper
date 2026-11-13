@@ -1,6 +1,6 @@
-"""Editing tags from their pages: names, category, description, aliases, parent and child tags, anti-tags, and
-tags of your own. Everything is saved in my_tags.toml ([tags.<id>], [rules], [rules_off], [anti], [anti_off]
-and [fixes]), so it survives updates and can also be changed by hand."""
+"""Editing tags from their pages: names, category, description, aliases, parent and child tags, anti-tags,
+related tags ("see also") and tags of your own. Everything is saved in my_tags.toml ([tags.<id>], [rules],
+[rules_off], [anti], [anti_off], [related] and [fixes]), so it survives updates and can also be changed by hand."""
 import re
 import threading
 
@@ -9,6 +9,7 @@ from . import tags as T
 
 FIELDS = ("label", "label_ru", "label_uk", "category", "description")
 NAMES = ("label", "label_ru", "label_uk")
+LINK_TABLES = ("rules", "rules_off", "anti", "anti_off", "related")
 _LOCK = threading.Lock()
 
 
@@ -57,7 +58,7 @@ def has_changes(tag_id: str) -> bool:
     """Whether you changed one of Bookkeeper's own tags (names, description, links, anti-tags)."""
     if tag_id in _my_tags():
         return True
-    for name in ("rules", "rules_off", "anti", "anti_off"):
+    for name in LINK_TABLES:
         for k, v in _table(name).items():
             if k == tag_id or tag_id in v:
                 return True
@@ -160,11 +161,12 @@ def create(fields: dict, from_label: str | None = None) -> str:
 
 
 def link(kind: str, tag_id: str, other: str, on: bool) -> None:
-    """Add (on) or remove a link from tag_id: kind "parent" (other is broader), "child" (other is narrower) or
-    "anti" (they contradict each other). Bookkeeper's own links can be switched off and on again."""
+    """Add (on) or remove a link from tag_id: kind "parent" (other is broader), "child" (other is narrower),
+    "anti" (they contradict each other) or "related" (see also). Bookkeeper's own links can be switched off and on
+    again."""
     if kind == "child":  # "other is a child of tag_id" is the same as "tag_id is a parent of other"
         kind, tag_id, other = "parent", other, tag_id
-    if kind not in ("parent", "anti"):
+    if kind not in ("parent", "anti", "related"):
         raise ValueError("Unknown kind of link.")
     for t in (tag_id, other):
         if not (T.is_known(t) or search.tag_exists(t)):
@@ -179,9 +181,12 @@ def link(kind: str, tag_id: str, other: str, on: bool) -> None:
             if on and other in T.descendants(tag_id):
                 raise ValueError(f"{T.info(other)['label']} is already narrower than {T.info(tag_id)['label']}, "
                                  f"so it can't be broader too.")
-        elif on and (other in T.ancestors(tag_id) or other in T.descendants(tag_id)):
+        elif on and kind == "anti" and (other in T.ancestors(tag_id) or other in T.descendants(tag_id)):
             raise ValueError(f"{T.info(other)['label']} and {T.info(tag_id)['label']} are in the same family, "
                              f"so they can't contradict each other.")
+        elif on and kind == "related" and (other in T.ancestors(tag_id) or other in T.descendants(tag_id)):
+            raise ValueError(f"{T.info(other)['label']} and {T.info(tag_id)['label']} are in the same family "
+                             f"already: their pages show each other.")
         tabs = link_tables()
         set_link(tabs, kind, tag_id, other, on)
         T.write_tables(link_changes(tabs))
@@ -192,7 +197,7 @@ def link(kind: str, tag_id: str, other: str, on: bool) -> None:
 
 def link_tables() -> dict[str, dict[str, list[str]]]:
     """my_tags.toml's link tables as they are now, to change with set_link() and save with link_changes()."""
-    return {name: _table(name) for name in ("rules", "rules_off", "anti", "anti_off")}
+    return {name: _table(name) for name in LINK_TABLES}
 
 
 def link_changes(tabs: dict) -> dict:
@@ -201,7 +206,8 @@ def link_changes(tabs: dict) -> dict:
 
 def set_link(tabs: dict, kind: str, tag_id: str, other: str, on: bool) -> None:
     """Add (on) or remove one link in the tables from link_tables(), without checking it: kind "parent" (other is
-    broader than tag_id), "child" (other is narrower) or "anti". Bookkeeper's own links are switched off, not lost."""
+    broader than tag_id), "child" (other is narrower), "anti" or "related". Bookkeeper's own links are switched off,
+    not lost."""
     if kind == "child":
         kind, tag_id, other = "parent", other, tag_id
     if kind == "parent":
@@ -223,6 +229,12 @@ def set_link(tabs: dict, kind: str, tag_id: str, other: str, on: bool) -> None:
         if not on and ours:
             off.setdefault(tag_id, []).append(other)
         tabs["anti"], tabs["anti_off"] = anti, off
+    elif kind == "related":  # yours only: Bookkeeper has none of its own
+        pair = {tag_id, other}
+        rel = {k: [x for x in v if {k, x} != pair] for k, v in tabs["related"].items()}
+        if on:
+            rel.setdefault(tag_id, []).append(other)
+        tabs["related"] = rel
     else:
         raise ValueError("Unknown kind of link.")
 
@@ -255,8 +267,9 @@ def _drop_links(tag_id: str) -> tuple[dict, set[str]]:
     off = {k: [x for x in v if x != tag_id] for k, v in off.items() if k != tag_id}
     anti = {k: [x for x in v if x != tag_id] for k, v in _table("anti").items() if k != tag_id}
     aoff = {k: [x for x in v if x != tag_id] for k, v in _table("anti_off").items() if k != tag_id}
+    rel = {k: [x for x in v if x != tag_id] for k, v in _table("related").items() if k != tag_id}
     return {("rules",): _clean(rules), ("rules_off",): _clean(off), ("anti",): _clean(anti),
-            ("anti_off",): _clean(aoff)}, touched
+            ("anti_off",): _clean(aoff), ("related",): _clean(rel)}, touched
 
 
 def reset(tag_id: str) -> None:

@@ -91,7 +91,8 @@ STEPS: dict[str, list[dict]] = {
     ],
     "litvek": [
         {"label": "home", "url": "https://litvek.com/"},
-        {"label": "book", "from": "home", "pattern": r'href="(/br/\d+[^"]*|/book-read/[^"]+)"'},
+        {"label": "book", "from": "home", "pattern": r"""href=['"](/books/\d+-[^'"/]+)['"]"""},  # single quotes there
+        {"label": "reader", "from": "book", "pattern": r"""href=['"](/book-read/[^'"]+)['"]"""},
     ],
     "kubikus": [
         {"label": "home", "url": "https://www.kubikus.ru/"},

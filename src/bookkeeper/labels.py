@@ -248,19 +248,39 @@ def _books_with_many(c, names) -> set[int]:
 def _link_is(kind: str, a: str, b: str) -> bool:
     if kind == "child":
         kind, a, b = "parent", b, a
-    return b in T.parents(a) if kind == "parent" else b in T.anti(a)
+    if kind == "parent":
+        return b in T.parents(a)
+    return b in (T.related(a) if kind == "related" else T.anti(a))
 
 
-def apply_many(entries, new_tags=(), links=()) -> dict:
+def _builtin_names(tag_id: str) -> set[str]:
+    """Keys of the names Bookkeeper itself knows a tag by: they mean it whatever you rename it to."""
+    if tag_id not in T.TAGS:
+        return {T.key(tag_id)}
+    en, ru, _cat, syns = T.TAGS[tag_id]
+    return {T.key(x) for x in (tag_id, en, ru, T.UK.get(tag_id) or "", *syns) if T.key(x)}
+
+
+def apply_many(entries, new_tags=(), links=(), tag_entries=None) -> dict:
     """Many label fixes in one go: entries [(label, ids)], where ids None undoes a fix, [] hides the label and
     [its own id] leaves it as it is; new_tags are made first; links [(kind, tag, other, on)] add or remove parent,
-    child and anti-tag links (see tagedit.set_link). One write to my_tags.toml, one re-tagging pass.
-    Returns how many labels and books changed, what each label meant before, and the links that changed (for undo)."""
+    child, anti-tag and related links (see tagedit.set_link); tag_entries {tag id: its whole [tags.<id>] table, or
+    None} change existing tags' names, category and description. One write to my_tags.toml, one re-tagging pass.
+    Returns how many labels and books changed, what each label meant before, the links that changed and the tags'
+    tables before (for undo)."""
     from . import tagedit  # local import: tagedit uses this module
     c = db.conn()
     entries = [(label.strip(), ids) for label, ids in entries if T.key(label)]
+    tag_entries = dict(tag_entries or {})
     # a new tag's names mean it from now on, even where they were another tag's alias
     new_names = [t[k] for t in new_tags for k in ("label", "label_ru", "label_uk") if t.get(k)]
+    # a renamed tag: labels written like its old or new names may mean something else now
+    mine = T.user_config().get("tags") or {}
+    previous_entries = {tid: (dict(mine[tid]) if isinstance(mine.get(tid), dict) else None) for tid in tag_entries}
+    for tid, e in tag_entries.items():
+        keep = _builtin_names(tid)
+        new_names += [n for n in (*T.own_names(tid), *((e or {}).get(k) for k in ("label", "label_ru", "label_uk")))
+                      if isinstance(n, str) and T.key(n) and T.key(n) not in keep]
     affected = _books_with_many(c, [label for label, _ in entries] + new_names)
     previous: dict[str, list[str] | None] = {}
     links = [list(x) for x in links if _link_is(*x[:3]) != bool(x[3])]  # only the ones that change something
@@ -276,6 +296,8 @@ def apply_many(entries, new_tags=(), links=()) -> dict:
                 fixes[label] = list(dict.fromkeys(ids))
                 by_key[T.key(label)] = label
         changes = {("tags", t["id"]): {k: v for k, v in t.items() if k != "id" and v} for t in new_tags}
+        for tid, e in tag_entries.items():
+            changes[("tags", tid)] = {k: v for k, v in (e or {}).items() if v} or None
         if entries:
             changes[("fixes",)] = dict(sorted(fixes.items(), key=lambda kv: T.key(kv[0])))
         if links:
@@ -285,14 +307,15 @@ def apply_many(entries, new_tags=(), links=()) -> dict:
             changes.update(tagedit.link_changes(tabs))
         T.write_tables(changes)
     T.reload()
-    if new_tags:
-        library.sync_tag_rows([t["id"] for t in new_tags])
+    if new_tags or tag_entries:
+        library.sync_tag_rows([t["id"] for t in new_tags] + list(tag_entries))
     if affected:
         library.retag_books(affected)
     touched = {a if kind == "parent" else b for kind, a, b, _ in links if kind in ("parent", "child")}
     if touched:
         library.refresh_rules_for(touched)
-    return {"labels": len(entries), "books": len(affected), "previous": previous, "links": links}
+    return {"labels": len(entries), "books": len(affected), "previous": previous, "links": links,
+            "previous_entries": previous_entries}
 
 
 AI_PROMPT = """\

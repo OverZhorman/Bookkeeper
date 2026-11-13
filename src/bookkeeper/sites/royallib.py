@@ -27,7 +27,7 @@ class RoyalLib(Site):
     name = "RoyalLib"
     home = BASE
     lang = "ru"
-    min_interval = 3.0  # the site shows a captcha to fast readers
+    min_interval = 6.0  # the site shows a captcha to fast readers, and blocked 3 s (2026-11)
     note = ("Published books, mostly Russian. Downloads use RoyalLib's own FB2, EPUB and TXT files. The site shows a "
             "captcha when it's read too fast; Bookkeeper then stops and waits for you to press Try again.")
     native_formats = ("fb2", "epub", "txt")

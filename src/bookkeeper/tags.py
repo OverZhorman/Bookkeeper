@@ -455,8 +455,9 @@ def _as_list(value) -> list[str]:
 
 
 @lru_cache(maxsize=1)
-def _extras() -> tuple[set, dict[str, str]]:
-    """(anti-tag pairs, descriptions): Bookkeeper's plus my_tags.toml's [anti], [anti_off] and descriptions."""
+def _extras() -> tuple[set, dict[str, str], set]:
+    """(anti-tag pairs, descriptions, related pairs): Bookkeeper's plus my_tags.toml's [anti], [anti_off],
+    descriptions and [related]."""
     user = _user_config()
     pairs = {frozenset((a, b)) for a, bs in ANTI.items() for b in bs if a != b}
     pairs |= {frozenset((a, b)) for a, bs in (user.get("anti") or {}).items() for b in _as_list(bs) if a != b}
@@ -465,7 +466,8 @@ def _extras() -> tuple[set, dict[str, str]]:
     for tid, extra in (user.get("tags") or {}).items():
         if isinstance(extra, dict) and isinstance(extra.get("description"), str) and extra["description"].strip():
             descriptions[tid] = extra["description"].strip()
-    return pairs, descriptions
+    related = {frozenset((a, b)) for a, bs in (user.get("related") or {}).items() for b in _as_list(bs) if a != b}
+    return pairs, descriptions, related
 
 
 def user_config() -> dict:
@@ -589,6 +591,11 @@ def child_tree(tag_id: str, _path: tuple = ()) -> list[dict]:
 def anti(tag_id: str) -> list[str]:
     """Tags that contradict this one."""
     return sorted({t for pair in _extras()[0] if tag_id in pair for t in pair if t != tag_id})
+
+
+def related(tag_id: str) -> list[str]:
+    """Tags you linked as related ("see also"): shown on each other's pages, they change no book's tags."""
+    return sorted({t for pair in _extras()[2] if tag_id in pair for t in pair if t != tag_id})
 
 
 def describe(tag_id: str) -> str | None:
@@ -722,6 +729,10 @@ USER_FILE_TEMPLATE = """\
 # [anti_off]
 # "harem" = ["no-harem"]
 
+# Related tags ("see also"), shown on each other's pages. They don't change any book's tags:
+# [related]
+# "isekai" = ["reincarnation"]
+
 # Add or rename tags, with a description:
 # [tags.my-favourite-trope]
 # label = "My favourite trope"
@@ -757,6 +768,7 @@ TABLE_NOTES = {
     ("rules_off",): "# Bookkeeper's own rules you switched off: the tag on the left no longer brings the tags on the right.\n",
     ("anti",): "# Tags that contradict each other (anti-tags), besides Bookkeeper's own.\n",
     ("anti_off",): "# Bookkeeper's own anti-tags you switched off.\n",
+    ("related",): "# Related tags (\"see also\"): each pair shows on both tags' pages. They don't change any book's tags.\n",
 }
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 _FILE_LOCK = threading.RLock()

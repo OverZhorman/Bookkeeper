@@ -50,7 +50,7 @@ class Rulate(Site):
     name = "Rulate"
     home = BASE
     lang = "ru"
-    min_interval = 1.5
+    min_interval = 3.0  # the site blocked faster reading (DDoS-Guard, 2026-11)
     note = ("Russian translations of web novels, plus original works and fanfiction. Many translations sell newer "
             "chapters: log in to have downloads include the ones you bought.")
     lists_adult = True

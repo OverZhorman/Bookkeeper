@@ -5,6 +5,7 @@ from .ficbook import Ficbook
 from .flibusta import Flibusta
 from .kubikus import KubikusForum
 from .litmir import LitMir
+from .litvek import Litvek
 from .litnet import Litnet
 from .ranobehub import RanobeHub
 from .ranobelib import RanobeLib
@@ -18,7 +19,7 @@ from .webnovel import WebNovel
 from .wuxiaclick import WuxiaClick
 
 SITES: dict[str, type[Site]] = {cls.id: cls for cls in (
-    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, KubikusForum)}
+    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, KubikusForum)}
 
 # Sites on the list that don't have a connector yet, and why.
 _WORKS_HERE = "Your site test worked from this computer. Connector coming next."
@@ -26,7 +27,6 @@ _CHECK = "Shows a bot check. The test now opens Waterfox so you can pass it: pre
 _BLOCKS_BOTS = ("Blocks programs like Bookkeeper with Cloudflare (your own Waterfox works). Bookkeeper doesn't get "
                 "around such checks, so it can't collect this site.")
 PLANNED = [
-    {"id": "litvek", "name": "Litvek", "home": "https://litvek.com", "reason": "Needs another test (no book page was found)."},
     {"id": "royalroad", "name": "Royal Road", "home": "https://www.royalroad.com", "reason": _CHECK},
     {"id": "novelupdates", "name": "NovelUpdates (tags only)", "home": "https://www.novelupdates.com", "reason": _CHECK},
     {"id": "scribblehub", "name": "Scribble Hub", "home": "https://www.scribblehub.com", "reason": _BLOCKS_BOTS},

@@ -108,7 +108,7 @@ You can filter by each of these sources.
 | RuLit | ✅ Working (the site-wide list, most popular first) |
 | RoyalLib | ✅ Working. Downloads use its own FB2 / EPUB / TXT files. It shows a captcha to fast readers, so Bookkeeper reads it slowly and stops if the captcha appears |
 | WebNovel | ✅ Catalog only (titles, tags, ratings). WebNovel protects its chapter text, so there's no narration check or download there |
-| Litvek | Needs another site test |
+| Litvek | ✅ Working: its web fiction (*Самиздат, сетевая литература*, about 95,000 books) with each book's keywords; another genre or the whole library can be chosen in its settings. Its robots.txt asks programs not to use the download links, so a download is put together from the online reader. Some books are only a fragment there |
 | Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, Archive of Our Own | Show a bot check; the site test now opens Waterfox so you can pass it |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
@@ -174,8 +174,11 @@ The chat can also suggest new tags, with their **parent tags**: several labels l
 Many site labels end up as aliases of a broad tag although they name something narrower. On the **Tags** page, press **✨ Improve tags with an AI chat** (or **✨ Improve with an AI chat** on one tag's page). The request holds the tags with the most aliases (or the ones you name), their parent, child and anti-tags, every alias with how many books have it, and the list of shared tags. The chat answers with:
 
 - **new child tags**, and which aliases move to them (*Non-human lead* → *Monster protagonist*, *Humanoid protagonist*, *Genderless protagonist*…). Books keep the broad tag through the parent link;
-- aliases that mean something else and move to the right tags, or junk to hide;
-- parent, child and anti-tag links to add or remove between shared tags.
+- aliases that mean something else and move to the right tags, real labels to keep apart (as labels of their own), or
+  junk to hide;
+- **new aliases**: other ways sites and readers write a tag, and new combined labels (one label meaning two tags);
+- **better names**, categories and descriptions (a renamed tag keeps its old name as an alias);
+- parent, child and anti-tag links to add or remove between shared tags, and **related tags** ("see also") to link.
 
 Check the answers, untick any you don't want, and apply. Tags you applied an answer for are marked as reviewed, so the next request brings the next ones (tick **again, with reviewed tags** to include them). Every import can be undone as a whole under **Earlier imports**.
 
@@ -186,7 +189,8 @@ Open **Tags** in the top bar and click a tag, then **✎ Edit tag**. There you c
 - its names in English, Russian and Ukrainian, its category and its description;
 - its **aliases**: other names a site might use. Every book with a label written that way gets the tag;
 - its **parent tags** (broader tags every book with it also gets) and **child tags** (narrower tags that can't appear without it);
-- its **anti-tags** (tags that contradict it).
+- its **anti-tags** (tags that contradict it);
+- **see also**: related tags worth a look from its page. They don't change any book's tags.
 
 Every change is saved at once and applies to every book. **Undo all my changes** puts one of Bookkeeper's own tags back. **+ New tag** on the Tags page makes a tag of your own, and on an unrecognized label's page **Make it a shared tag** turns that label into one (its other spellings join it). Tags you made can be deleted.
 
@@ -197,6 +201,7 @@ Everything you change in the interface is saved in `data\my_tags.toml`, so it su
 - `[synonyms]` and `[fixes]`: what site labels mean (`"попаданец в зомби-апокалипсис" = ["isekai", "undead", "apocalypse"]`);
 - `[rules]`: parent tags (`"harem" = ["romance"]`), and `[rules_off]` to switch one of Bookkeeper's own off;
 - `[anti]` and `[anti_off]`: anti-tags;
+- `[related]`: related tags ("see also");
 - `[tags.<id>]`: names, category and description of a tag.
 
 After editing the file by hand, press **Re-apply my tag rules** on the Sites page.
