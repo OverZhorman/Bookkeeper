@@ -3,6 +3,7 @@ from .authortoday import AuthorToday
 from .base import Site
 from .ficbook import Ficbook
 from .flibusta import Flibusta
+from .freewebnovel import FreeWebNovel
 from .kubikus import KubikusForum
 from .litmir import LitMir
 from .litvek import Litvek
@@ -16,10 +17,12 @@ from .rulit import RuLit
 from .samlib import Samlib
 from .wattpad import Wattpad
 from .webnovel import WebNovel
+from .wtrlab import WtrLab
 from .wuxiaclick import WuxiaClick
 
 SITES: dict[str, type[Site]] = {cls.id: cls for cls in (
-    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, KubikusForum)}
+    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, WtrLab, FreeWebNovel,
+    KubikusForum)}
 
 # Sites on the list that don't have a connector yet, and why.
 _WORKS_HERE = "Your site test worked from this computer. Connector coming next."

@@ -94,6 +94,15 @@ STEPS: dict[str, list[dict]] = {
         {"label": "book", "from": "home", "pattern": r"""href=['"](/books/\d+-[^'"/]+)['"]"""},  # single quotes there
         {"label": "reader", "from": "book", "pattern": r"""href=['"](/book-read/[^'"]+)['"]"""},
     ],
+    "wtrlab": [
+        {"label": "home", "url": "https://wtr-lab.com/en"},
+        {"label": "book", "from": "home", "pattern": r'href="(/en/novel/\d+/[^"]+)"'},
+    ],
+    "freewebnovel": [
+        {"label": "home", "url": "https://freewebnovel.com/"},
+        {"label": "book", "from": "home", "pattern": r'href="(/novel/[^"/]+)"'},
+        {"label": "chapter", "from": "book", "pattern": r'href="(/novel/[^"/]+/chapter-\d+)"'},
+    ],
     "kubikus": [
         {"label": "home", "url": "https://www.kubikus.ru/"},
         {"label": "forum", "url": "https://www.kubikus.ru/forum/"},

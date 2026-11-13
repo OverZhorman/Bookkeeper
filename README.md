@@ -109,6 +109,8 @@ You can filter by each of these sources.
 | RoyalLib | ✅ Working. Downloads use its own FB2 / EPUB / TXT files. It shows a captcha to fast readers, so Bookkeeper reads it slowly and stops if the captcha appears |
 | WebNovel | ✅ Catalog only (titles, tags, ratings). WebNovel protects its chapter text, so there's no narration check or download there |
 | Litvek | ✅ Working: its web fiction (*Самиздат, сетевая литература*, about 95,000 books) with each book's keywords; another genre or the whole library can be chosen in its settings. Its robots.txt asks programs not to use the download links, so a download is put together from the online reader. Some books are only a fragment there |
+| WTR-LAB | ✅ Catalog only (titles, genres, NovelUpdates-style tags, ratings) of its machine translations, about 100,000 novels. Its robots.txt asks programs not to read chapters, so there's no narration check or download there |
+| FreeWebNovel | ✅ Working (English translations and originals, about 16,000 novels). Its lists show only 1,000 novels each, so Bookkeeper reads many of them, every genre included |
 | Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, Archive of Our Own | Show a bot check; the site test now opens Waterfox so you can pass it |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
