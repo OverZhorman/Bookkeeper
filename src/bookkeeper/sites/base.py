@@ -65,6 +65,17 @@ def looks_adult(labels) -> bool:
     return any(ADULT_LABELS.search((x or "").strip()) for x in labels or [])
 
 
+def origin_from_title(original_title: str) -> str | None:
+    """A translated book's original language (kr / jp / cn), from the script of its original title."""
+    if re.search(r"[가-힣]", original_title or ""):
+        return "kr"
+    if re.search(r"[぀-ヿ]", original_title or ""):
+        return "jp"
+    if re.search(r"[一-鿿]", original_title or ""):
+        return "cn"
+    return None
+
+
 class Site:
     id = ""
     name = ""

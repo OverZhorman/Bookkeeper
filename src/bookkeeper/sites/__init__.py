@@ -1,6 +1,7 @@
 """All sites Bookkeeper knows about."""
 from .authortoday import AuthorToday
 from .base import Site
+from .fanmtl import FanMtl
 from .ficbook import Ficbook
 from .flibusta import Flibusta
 from .freewebnovel import FreeWebNovel
@@ -21,7 +22,7 @@ from .wtrlab import WtrLab
 from .wuxiaclick import WuxiaClick
 
 SITES: dict[str, type[Site]] = {cls.id: cls for cls in (
-    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, WtrLab, FreeWebNovel,
+    RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, WtrLab, FreeWebNovel, FanMtl,
     KubikusForum)}
 
 # Sites on the list that don't have a connector yet, and why.

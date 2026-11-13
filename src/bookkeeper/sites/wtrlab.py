@@ -12,7 +12,7 @@ import json
 import re
 
 from ..http import NotFound
-from .base import BookInfo, Chapter, Site, SiteError, looks_adult
+from .base import BookInfo, Chapter, Site, SiteError, looks_adult, origin_from_title
 
 BASE = "https://wtr-lab.com"
 _DATA = re.compile(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
@@ -21,17 +21,6 @@ _NOVEL = re.compile(r"<loc>(https://wtr-lab\.com/en/novel/(\d+)/([^<]+))</loc>")
 _GENRE = re.compile(r'href="/en/novel-list\?genre=\d+"><span[^>]*>([^<]+)</span>')
 STATUS = {"ongoing": "ongoing", "completed": "completed", "hiatus": "frozen", "dropped": "frozen"}
 MTL = "Machine translation"
-
-
-def _origin(raw_title: str) -> str | None:
-    """The original language, from the script of the original title."""
-    if re.search(r"[가-힣]", raw_title):
-        return "kr"
-    if re.search(r"[぀-ヿ]", raw_title):
-        return "jp"
-    if re.search(r"[一-鿿]", raw_title):
-        return "cn"
-    return None
 
 
 def _raw_title(data: dict) -> str:
@@ -105,7 +94,7 @@ class WtrLab(Site):
             alt_titles=[t for t in dict.fromkeys([*names, raw_title]) if t and t != title],
             authors=[author] if author else [], description=(data.get("description") or "").strip() or None,
             cover=data.get("image"), lang="en", status=STATUS.get(status.group(1).lower()) if status else None,
-            is_translation=True, origin=_origin(raw_title), chapters=sd.get("chapter_count"),
+            is_translation=True, origin=origin_from_title(raw_title), chapters=sd.get("chapter_count"),
             rating=round(float(rating) * 2, 2) if rating else None, votes=sd.get("total_rate"),
             views=sd.get("view"), likes=sd.get("in_library"), pop_raw=sd.get("view"), access="free",
             adult=looks_adult([*genres, *tags]), created_at=(sd.get("created_at") or "")[:10] or None,

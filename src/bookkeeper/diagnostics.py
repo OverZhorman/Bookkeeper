@@ -103,6 +103,12 @@ STEPS: dict[str, list[dict]] = {
         {"label": "book", "from": "home", "pattern": r'href="(/novel/[^"/]+)"'},
         {"label": "chapter", "from": "book", "pattern": r'href="(/novel/[^"/]+/chapter-\d+)"'},
     ],
+    "fanmtl": [
+        {"label": "home", "url": "https://www.fanmtl.com/"},
+        {"label": "list", "url": "https://www.fanmtl.com/list/all/all-newstime-0.html"},
+        {"label": "book", "from": "list", "pattern": r'href="(/novel/[^"/_]+\.html)"'},
+        {"label": "chapter", "from": "book", "pattern": r'id="readchapterbtn" href="(/novel/[^"/]+_\d+\.html)"'},
+    ],
     "kubikus": [
         {"label": "home", "url": "https://www.kubikus.ru/"},
         {"label": "forum", "url": "https://www.kubikus.ru/forum/"},
