@@ -225,6 +225,28 @@ def jload(text, default=None):
         return default
 
 
+WAL_LIMIT = 64 * 1024 * 1024  # bytes of write-ahead log (library.db-wal) kept on disk between checkpoints
+
+
+def checkpoint() -> bool:
+    """Copy the write-ahead log back into the library and empty it, so it doesn't keep growing. Uses a connection of
+    its own that waits at most 2 seconds: when the library is busy it gives up and the next try comes later, instead
+    of keeping the collectors waiting. True when the log was emptied."""
+    if _initialized_path is None:
+        return False
+    c = sqlite3.connect(_initialized_path, timeout=2, isolation_level=None)
+    try:
+        c.execute("PRAGMA busy_timeout=2000")
+        c.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
+        c.execute("PRAGMA wal_checkpoint(PASSIVE)")  # most of the copying, without blocking anyone
+        busy, _, _ = c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return not busy
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        c.close()
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=30, check_same_thread=False, isolation_level=None)
     conn.row_factory = sqlite3.Row
@@ -232,6 +254,7 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")  # each time the log starts over, cut it back to this
     conn.execute("PRAGMA cache_size=-65536")
     # SQLite's own lower() only handles A-Z; this one handles Cyrillic too.
     conn.create_function("ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)

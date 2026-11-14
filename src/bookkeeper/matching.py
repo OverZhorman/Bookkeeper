@@ -74,25 +74,78 @@ def find_duplicates(progress=None) -> int:
             ro = find(other)
             if ro != root:
                 parent[ro] = root
-    groups: dict[int, list[int]] = {}
+    found: dict[int, list[int]] = {}
     for x in list(parent):
-        groups.setdefault(find(x), []).append(x)
-    groups = {k: sorted(set(v)) for k, v in groups.items() if len(set(v)) > 1}
+        found.setdefault(find(x), []).append(x)
+    groups = [sorted(set(v)) for v in found.values() if len(set(v)) > 1]
+    return _save_groups(c, groups, progress)
 
-    with db.transaction() as tc:
-        tc.execute("UPDATE books SET work_id=NULL, is_primary=1 WHERE work_id IS NOT NULL")
-        tc.execute("DELETE FROM book_tags WHERE source='other-site'")
-    for n, members in enumerate(groups.values()):
-        work_id = members[0]
+
+def _save_groups(c, groups: list[list[int]], progress=None) -> int:
+    """Write the groups, changing only what differs from the saved ones: groups that formed, grew, shrank or broke
+    up, a different main copy, and copies whose shared tags are out of date. (Rewriting every group each time kept
+    the collectors waiting and made the database's write-ahead log grow by hundreds of MB.)"""
+    from .library import _recompute_pov, _refresh_rules  # local import: avoids a cycle
+    ids = sorted({m for members in groups for m in members})
+    rank: dict[int, tuple] = {}
+    own: dict[int, set[str]] = {i: set() for i in ids}
+    copied: dict[int, set[str]] = {i: set() for i in ids}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        q = ",".join("?" * len(chunk))
+        for r in c.execute(f"SELECT id, meta_at IS NOT NULL, COALESCE(popularity, 0), COALESCE(chapters, 0) "
+                           f"FROM books WHERE id IN ({q})", chunk):
+            rank[r[0]] = (r[1], r[2], r[3])
+        for r in c.execute(f"SELECT book_id, tag, source FROM book_tags WHERE book_id IN ({q}) "
+                           f"AND source IN ('site', 'text', 'user', 'other-site')", chunk):
+            (copied if r[2] == "other-site" else own)[r[0]].add(r[1])
+    groups = [g for g in ([m for m in members if m in rank] for members in groups) if len(g) > 1]  # gone meanwhile
+    grouped = {m for members in groups for m in members}
+    current = {r[0]: (r[1], r[2]) for r in c.execute("SELECT id, work_id, is_primary FROM books "
+                                                     "WHERE work_id IS NOT NULL")}
+    saved: dict[int, set[int]] = {}
+    for book_id, (work_id, _) in current.items():
+        saved.setdefault(work_id, set()).add(book_id)
+
+    # Copies that aren't part of any group any more stand alone again.
+    shared = {r[0] for r in c.execute("SELECT DISTINCT book_id FROM book_tags WHERE source='other-site'")}
+    alone = sorted((set(current) | shared) - grouped)
+    for i in range(0, len(alone), 200):
+        chunk = alone[i:i + 200]
+        q = ",".join("?" * len(chunk))
         with db.transaction() as tc:
+            tc.execute(f"UPDATE books SET work_id=NULL, is_primary=1 WHERE id IN ({q}) AND work_id IS NOT NULL",
+                       chunk)
+            tc.execute(f"DELETE FROM book_tags WHERE source='other-site' AND book_id IN ({q})", chunk)
+            for m in chunk:
+                _refresh_rules(tc, m)
+                _recompute_pov(tc, m)
+
+    def main_copy(members):
+        # The copy with details, then the most popular, then the longest; on a tie the current main copy stays.
+        return max(members, key=lambda m: (*rank[m], current[m][1] if m in current else 0, -m))
+
+    def tags_from_others(members, m):
+        return set().union(*(own[o] for o in members if o != m)) - own[m]
+
+    main_only = []
+    for n, members in enumerate(groups):
+        work_id, best = members[0], main_copy(members)
+        if saved.get(work_id) != set(members) or any(copied[m] != tags_from_others(members, m) for m in members):
             q = ",".join("?" * len(members))
-            best = tc.execute(
-                f"SELECT id FROM books WHERE id IN ({q}) ORDER BY (meta_at IS NOT NULL) DESC, "
-                f"COALESCE(popularity,0) DESC, COALESCE(chapters,0) DESC LIMIT 1", members).fetchone()["id"]
-            tc.execute(f"UPDATE books SET work_id=?, is_primary=(id=?) WHERE id IN ({q})", [work_id, best, *members])
-            share_tags(tc, members)
+            with db.transaction() as tc:
+                tc.execute(f"UPDATE books SET work_id=?, is_primary=(id=?) WHERE id IN ({q})",
+                           [work_id, best, *members])
+                share_tags(tc, members)
+        elif any(current[m][1] != (m == best) for m in members):
+            main_only.append((best, members))
         if progress and n % 200 == 0:
             progress(n, len(groups))
+    for i in range(0, len(main_only), 200):
+        with db.transaction() as tc:
+            for best, members in main_only[i:i + 200]:
+                tc.execute(f"UPDATE books SET is_primary=(id=?) WHERE id IN ({','.join('?' * len(members))})",
+                           [best, *members])
     return len(groups)
 
 

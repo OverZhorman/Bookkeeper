@@ -142,14 +142,17 @@ class AuthorToday(Site):
             try:
                 books = self._listing(genre, sorting, state["page"])
             except NotFound:
-                # A listing that got shorter, or a genre the site dropped. The site sometimes answers "not found"
-                # for a moment too, so this page is tried three times (five minutes apart) before moving on.
-                at = [state["i"], state["page"]]
-                miss = state.get("missing") or {}
-                state["missing"] = {"at": at, "n": miss.get("n", 0) + 1 if miss.get("at") == at else 1}
-                if state["missing"]["n"] < 3:
-                    raise
-                books = []
+                if state["page"] > 1:
+                    books = []  # past the list's last page: that's how the site says there are no more
+                else:
+                    # A genre the site dropped, or a moment's "not found": the first page is tried three times
+                    # (five minutes apart) before moving on.
+                    at = [state["i"], state["page"]]
+                    miss = state.get("missing") or {}
+                    state["missing"] = {"at": at, "n": miss.get("n", 0) + 1 if miss.get("at") == at else 1}
+                    if state["missing"]["n"] < 3:
+                        raise
+                    books = []
             state.pop("missing", None)
             if books:
                 known = {g for g, _ in state["queue"]}

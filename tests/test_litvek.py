@@ -80,13 +80,15 @@ def test_author_today_moves_past_a_missing_listing_page():
 
     def listing(genre, sorting, page):
         tries.append((genre, page))
-        if (genre, page) == ("litrpg", 339):
-            raise NotFound("https://author.today/work/genre/litrpg")
+        if (genre, page) in (("litrpg", 339), ("realrpg", 1)):
+            raise NotFound(f"https://author.today/work/genre/{genre}")
         return []
     site._listing = listing
+    # "Not found" after a list's last page (339 here) ends that list: on to the next one at once.
     state = {"queue": [["litrpg", "likes"], ["realrpg", "likes"]], "i": 0, "page": 339}
-    for _ in range(2):  # the crawler tries again five minutes later, with the same state
+    for _ in range(2):  # a missing first page: the crawler tries again five minutes later, with the same state
         with pytest.raises(NotFound):
             list(site.discover(state))
     list(site.discover(state))  # the third time: on to the next listing
-    assert tries[-1] == ("realrpg", 1) and state.get("full_done") and "missing" not in state
+    assert tries[:2] == [("litrpg", 339), ("realrpg", 1)] and len(tries) == 4
+    assert state.get("full_done") and "missing" not in state

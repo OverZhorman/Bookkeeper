@@ -80,3 +80,42 @@ def test_forum_mentions_are_extracted_and_matched(lib):
                   ("Kubikus", "http://post", "2026-01-01", m.get("site"), m.get("sid"), m.get("url"), m.get("title"), m.get("author")))
     assert kubikus.match_open_mentions() == 2
     assert {r[0] for r in c.execute("SELECT book_id FROM recommendations")} == {a, b}
+
+
+def test_matching_writes_only_what_changed(lib):
+    db, T, library, matching = lib
+    from bookkeeper.sites.base import BookInfo
+
+    def book(site, sid, title, tags, authors=("Ann Lee",)):
+        return library.upsert_book(site, BookInfo(sid=sid, url=f"u{sid}", title=title, authors=list(authors),
+                                                  is_translation=True, tags=tags))
+    a = book("ranobelib", "1", "The Tea Master Chronicles", ["Апокалипсис"])
+    b = book("webnovel", "2", "The Tea Master Chronicles", ["SYSTEM"])
+    assert matching.find_duplicates() == 1
+    c = db.conn()
+
+    def copied(book_id):
+        return {r[0] for r in c.execute("SELECT tag FROM book_tags WHERE book_id=? AND source='other-site'",
+                                        (book_id,))}
+
+    def works():
+        return {r[0]: (r[1], r[2]) for r in c.execute("SELECT id, work_id, is_primary FROM books")}
+    before = c.total_changes
+    assert matching.find_duplicates() == 1 and c.total_changes == before  # nothing changed: nothing written
+    # One copy gets a new tag: the other copy gets it too.
+    book("webnovel", "2", "The Tea Master Chronicles", ["SYSTEM", "first person"])
+    matching.find_duplicates()
+    assert {"system", "pov-first"} <= copied(a) and "apocalypse" in copied(b)
+    # A third copy joins the group.
+    d = book("wuxiaclick", "3", "The Tea Master Chronicles", [])
+    matching.find_duplicates()
+    w = works()
+    assert w[a][0] == w[b][0] == w[d][0] == min(a, b, d) and sum(w[x][1] for x in (a, b, d)) == 1
+    assert {"system", "apocalypse"} <= copied(d)
+    # One copy turns out to be another book: it stands alone again, and the others stop sharing its tags.
+    book("webnovel", "2", "Something Else Entirely", ["SYSTEM", "first person"], authors=("Bo Wen",))
+    assert matching.find_duplicates() == 1
+    w = works()
+    assert w[b] == (None, 1) and copied(b) == set() and w[a][0] == w[d][0] == min(a, d)
+    assert "system" not in copied(a) and copied(d) == {"apocalypse"}
+    assert c.execute("SELECT pov FROM books WHERE id=?", (a,)).fetchone()[0] is None  # its narration came from b

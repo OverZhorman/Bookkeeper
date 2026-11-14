@@ -10,9 +10,12 @@ All requests to a site go through that site's polite HTTP client, so the pace is
 import logging
 import queue
 import shutil
+import sqlite3
 import threading
 import time
 import traceback
+
+import httpx
 
 from . import accounts, config, db, library, matching
 from .analysis.pov import analyse
@@ -41,6 +44,11 @@ def site_settings(site_id: str) -> dict:
     row = db.conn().execute("SELECT settings FROM sites WHERE id=?", (site_id,)).fetchone()
     extra = {k: v["default"] for k, v in getattr(SITES.get(site_id), "extra_settings", {}).items()}
     return {**DEFAULTS, **extra, **(jload(row["settings"], {}) if row else {})}
+
+
+def _library_busy(e: Exception) -> bool:
+    """SQLite's "database is locked": another job had the library for longer than the wait."""
+    return isinstance(e, sqlite3.OperationalError) and ("locked" in str(e) or "busy" in str(e))
 
 
 class SiteWorker(threading.Thread):
@@ -98,24 +106,39 @@ class SiteWorker(threading.Thread):
             return
         while not self.stop.is_set() and not self.manager.shutdown.is_set():
             try:
-                did = self.cycle()
-                if not did:
-                    self.activity = "idle"
-                    self._idle(30)
-            except Stopped:
-                break
-            except Blocked as e:
-                log.warning("%s blocked: %s", self.site_id, e)
-                self._status("blocked", str(e))
-                self.activity = "blocked"
+                try:
+                    did = self.cycle()
+                    if not did:
+                        self.activity = "idle"
+                        self._idle(30)
+                except Stopped:
+                    break
+                except Blocked as e:
+                    log.warning("%s blocked: %s", self.site_id, e)
+                    self._status("blocked", str(e))
+                    self.activity = "blocked"
+                    self.gen = None
+                    self._idle(60)
+                except Exception as e:
+                    if _library_busy(e):
+                        # Another job kept the library for over 30 seconds. Nothing is lost: try again shortly.
+                        log.warning("%s: the library was busy, trying again in a minute", self.site_id)
+                        self.activity = "library busy, retrying in a minute"
+                        self.gen = None
+                        self._idle(60)
+                        continue
+                    # A slow or unreachable site needs one line, not a traceback.
+                    where = "" if isinstance(e, httpx.TransportError) else "\n" + traceback.format_exc()
+                    log.error("%s error: %s: %s%s", self.site_id, type(e).__name__, e, where)
+                    self._status("error", f"{type(e).__name__}: {e}")
+                    self.activity = "error, retrying in 5 minutes"
+                    self.gen = None
+                    self._idle(300)
+            except Exception as e:  # even noting the problem failed (the library was busy): keep this site going
+                log.warning("%s: could not note a problem (%s), trying again in a minute", self.site_id, e)
+                self.activity = "library busy, retrying in a minute"
                 self.gen = None
                 self._idle(60)
-            except Exception as e:
-                log.error("%s error: %s\n%s", self.site_id, e, traceback.format_exc())
-                self._status("error", f"{type(e).__name__}: {e}")
-                self.activity = "error, retrying in 5 minutes"
-                self.gen = None
-                self._idle(300)
         if self.browser:
             try:
                 self.browser.close()
@@ -409,7 +432,7 @@ class Manager:
         self.shutdown = threading.Event()
         self.workers: dict[str, SiteWorker] = {}
         self.dirty: set[str] = set()
-        self.last_match = 0.0
+        self.last_match = time.time() - 1800 + 600  # the first check for copies on other sites: 10 minutes in
         self.matching_now = False
         self._housekeeper = threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True)
 
@@ -543,7 +566,7 @@ class Manager:
             self.matching_now = False
 
     def _housekeeping(self):
-        last_counts = 0.0
+        last_counts, last_checkpoint = 0.0, time.time()
         while not self.shutdown.wait(20):
             try:
                 if self.dirty and time.time() - last_counts > 120:
@@ -556,6 +579,9 @@ class Manager:
                     self.run_matching()
                     from .sites.kubikus import match_open_mentions
                     match_open_mentions()
+                if time.time() - last_checkpoint > 600:  # keep library.db-wal from growing without end
+                    db.checkpoint()
+                    last_checkpoint = time.time()
             except Exception as e:  # never let housekeeping die
                 log.error("housekeeping: %s\n%s", e, traceback.format_exc())
 
