@@ -65,7 +65,7 @@ STEPS: dict[str, list[dict]] = {
     ],
     "ao3": [
         {"label": "home", "url": "https://archiveofourown.org/"},
-        {"label": "catalog", "url": "https://archiveofourown.org/works/search?work_search%5Bquery%5D=%22first+person%22"},
+        {"label": "catalog", "url": "https://archiveofourown.org/tags/Original%20Work/works"},
         {"label": "book", "from": "catalog", "pattern": r'href="(/works/\d+)"'},
     ],
     "samlib": [

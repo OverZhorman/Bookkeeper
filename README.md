@@ -112,7 +112,8 @@ You can filter by each of these sources.
 | WTR-LAB | ✅ Catalog only (titles, genres, NovelUpdates-style tags, ratings) of its machine translations, about 100,000 novels. Its robots.txt asks programs not to read chapters, so there's no narration check or download there |
 | FreeWebNovel | ✅ Working (English translations and originals, about 16,000 novels). Its lists show only 1,000 novels each, so Bookkeeper reads many of them, every genre included |
 | FanMTL | ✅ Working: machine translations of Chinese web novels, many of them fan fiction (Naruto, One Piece, Douluo, Marvel, Pokémon), about 165,000 novels. Its whole list is read by popularity, then by date added; fandoms become fandom tags |
-| Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, Archive of Our Own | Show a bot check; the site test now opens Waterfox so you can pass it |
+| Archive of Our Own | ✅ Working. Too big to collect whole, so Bookkeeper reads the tags you choose (Sites → Archive of Our Own → Settings; by default Original Work, First Person, LitRPG, Isekai and a few more), most recently updated first, keeping English, Russian and Ukrainian works. Its robots.txt asks programs to stay off its search pages and download links, so it's read slowly and a download is put together from the chapters. AO3's servers are often overloaded: Bookkeeper waits and tries again |
+| Royal Road, NovelUpdates, Scribble Hub, FanFiction.net | Show a bot check; the site test now opens Waterfox so you can pass it |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
 

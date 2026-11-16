@@ -76,7 +76,9 @@ def looks_like_bot_check(status: int, headers: httpx.Headers, body: bytes) -> st
     if headers.get("cf-mitigated") == "challenge":
         return "Cloudflare bot check"
     if status in (403, 429, 503, 418):
-        head = body[:20000].decode("utf-8", "ignore")
+        # Cloudflare adds this passive script to ordinary pages too, a site's own "overloaded" error page included
+        # (AO3's 503 "Page Responding Too Slowly"): on its own it isn't a challenge.
+        head = body[:20000].decode("utf-8", "ignore").replace("challenge-platform/scripts/jsd/", "")
         for marker in CHALLENGE_TEXT:
             if marker in head:
                 if "ddos" in marker.lower() or "DDoS" in head:

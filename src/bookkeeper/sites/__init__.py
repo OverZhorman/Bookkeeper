@@ -1,4 +1,5 @@
 """All sites Bookkeeper knows about."""
+from .ao3 import Ao3
 from .authortoday import AuthorToday
 from .base import Site
 from .fanmtl import FanMtl
@@ -23,7 +24,7 @@ from .wuxiaclick import WuxiaClick
 
 SITES: dict[str, type[Site]] = {cls.id: cls for cls in (
     RanobeLib, AuthorToday, Litnet, Flibusta, WuxiaClick, Wattpad, RanobeHub, Ranobes, Samlib, Rulate, Ficbook, WebNovel, RoyalLib, LitMir, RuLit, Litvek, WtrLab, FreeWebNovel, FanMtl,
-    KubikusForum)}
+    Ao3, KubikusForum)}
 
 # Sites on the list that don't have a connector yet, and why.
 _WORKS_HERE = "Your site test worked from this computer. Connector coming next."
@@ -35,5 +36,4 @@ PLANNED = [
     {"id": "novelupdates", "name": "NovelUpdates (tags only)", "home": "https://www.novelupdates.com", "reason": _CHECK},
     {"id": "scribblehub", "name": "Scribble Hub", "home": "https://www.scribblehub.com", "reason": _BLOCKS_BOTS},
     {"id": "fanfiction", "name": "FanFiction.net", "home": "https://www.fanfiction.net", "reason": _BLOCKS_BOTS},
-    {"id": "ao3", "name": "Archive of Our Own", "home": "https://archiveofourown.org", "reason": _CHECK},
 ]
