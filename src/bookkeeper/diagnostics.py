@@ -68,6 +68,22 @@ STEPS: dict[str, list[dict]] = {
         {"label": "catalog", "url": "https://archiveofourown.org/tags/Original%20Work/works"},
         {"label": "book", "from": "catalog", "pattern": r'href="(/works/\d+)"'},
     ],
+    "storygraph": [
+        {"label": "home", "url": "https://app.thestorygraph.com/"},
+        {"label": "browse", "url": "https://app.thestorygraph.com/browse"},
+    ],
+    "librarything": [
+        {"label": "home", "url": "https://www.librarything.com/"},
+        {"label": "tag", "url": "https://www.librarything.com/tag/fantasy"},
+    ],
+    "romanceio": [
+        {"label": "home", "url": "https://www.romance.io/"},
+        {"label": "topics", "url": "https://www.romance.io/topics"},
+    ],
+    "openlibrary": [
+        {"label": "home", "url": "https://openlibrary.org/"},
+        {"label": "subject", "url": "https://openlibrary.org/subjects/fantasy"},
+    ],
     "samlib": [
         {"label": "home", "url": "http://samlib.ru/"},
         {"label": "catalog", "url": "http://samlib.ru/rating/top40/"},

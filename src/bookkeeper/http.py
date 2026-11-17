@@ -75,6 +75,9 @@ CHALLENGE_TEXT = (
 def looks_like_bot_check(status: int, headers: httpx.Headers, body: bytes) -> str | None:
     if headers.get("cf-mitigated") == "challenge":
         return "Cloudflare bot check"
+    # Anubis ("Making sure you're not a bot!") answers its check page with HTTP 200.
+    if b"/.within.website/" in body[:30000] and b"anubis" in body[:30000].lower():
+        return "Anubis bot check"
     if status in (403, 429, 503, 418):
         # Cloudflare adds this passive script to ordinary pages too, a site's own "overloaded" error page included
         # (AO3's 503 "Page Responding Too Slowly"): on its own it isn't a challenge.

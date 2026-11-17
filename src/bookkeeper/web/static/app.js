@@ -845,7 +845,7 @@ async function drawSites(first) {
         h("b", {}, "Test from this computer"), " visits a few pages of the site slowly (home, catalog, one book, one chapter) and saves what it sees into a ZIP file. Send that ZIP to finish the site's connector. If a page shows an “are you human?” check, a normal Waterfox window (or Edge, if Waterfox is not installed) opens so you can complete it yourself."),
       h("table", {}, h("tr", {}, h("th", {}, "Site"), h("th", {}, "Status"), h("th", {}, "Test")),
         data.planned.map((p) => h("tr", {}, h("td", {}, h("a", { href: p.home, target: "_blank" }, p.name)), h("td", { class: "muted" }, p.reason),
-          h("td", { id: `test-${p.id}`, style: { minWidth: "260px" } }, testCell(p.id))))),
+          h("td", { id: `test-${p.id}`, style: { minWidth: "260px" } }, p.testable === false ? h("span", { class: "faint" }, "—") : testCell(p.id))))),
       h("div", { style: { marginTop: "18px", display: "flex", gap: "8px", flexWrap: "wrap" } },
         h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/match"); toast("Looking for the same books on different sites…"); } }, "Find the same books across sites now"),
         h("button", { class: "btn", onclick: async () => { await api.post("/api/maintenance/retag"); toast("Re-applying tag rules in the background…"); } }, "Re-apply my tag rules"),
@@ -882,7 +882,7 @@ async function refreshTest(siteId, cell) {
 function siteCard(s) {
   const c = s.counts || {};
   const status = !s.enabled ? "paused" : s.status;
-  const label = { running: "Collecting", idle: s.enabled ? "Waiting" : "Off", paused: "Off", blocked: "Blocked", error: "Problem", done: "Up to date" }[status] || status;
+  const label = { running: "Collecting", idle: s.enabled ? "Waiting" : "Off", paused: "Off", blocked: "Blocked", error: "Problem", waiting: "Site busy", done: "Up to date" }[status] || status;
   const settings = s.settings || {};
   const det = h("details", { class: "settings", open: openSettings.has(s.id), ontoggle: (e) => e.target.open ? openSettings.add(s.id) : openSettings.delete(s.id) },
     h("summary", {}, "Settings"),
@@ -892,7 +892,7 @@ function siteCard(s) {
           onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { min_interval: +e.target.value }); toast("Saved"); } })),
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: settings.analyze !== false, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { analyze: e.target.checked }); toast("Saved"); } }), "Check narration of each book (reads its opening chapters)"),
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!settings.include_adult, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { include_adult: e.target.checked }); toast("Saved"); } }), "Collect 18+ books (you can hide them in the library)"),
-      Object.entries(s.extra_settings || {}).map(([key, def]) => h("div", { class: "field" }, h("label", {}, def.label),
+      Object.entries(s.extra_settings || {}).map(([key, def]) => def.secret ? secretField(s, key, def) : h("div", { class: "field" }, h("label", {}, def.label),
         h("textarea", { class: "note", style: { minHeight: "54px" }, onchange: async (e) => { await api.post(`/api/sites/${s.id}`, { [key]: e.target.value }); toast("Saved — collecting with the new settings"); } },
           settings[key] ?? def.default)))));
   const live = s.live || {};
@@ -915,6 +915,27 @@ function siteCard(s) {
     h("div", { class: "note" }, s.note),
     accountBox(s),
     det);
+}
+
+// A secret setting (an API token): kept encrypted by the app and never shown again, only "saved" or not.
+function secretField(s, key, def) {
+  const saved = (s.secrets_saved || {})[key];
+  const input = h("input", { class: "input", type: "password", autocomplete: "off",
+    placeholder: saved ? "Saved — paste a new one to replace it" : "Paste it here" });
+  const save = async () => {
+    if (!input.value.trim()) return;
+    try { await api.post(`/api/sites/${s.id}`, { [key]: input.value.trim() }); toast("Saved (encrypted)"); }
+    catch (e) { toast(String(e.message || e)); }
+    input.value = ""; drawSites(false);
+  };
+  return h("div", { class: "field" }, h("label", {}, def.label),
+    def.link ? h("div", { style: { fontSize: "12px", margin: "2px 0 6px" } },
+      h("a", { href: def.link, target: "_blank", rel: "noopener" }, def.link_label || def.link)) : null,
+    h("div", { class: "shelf" }, input,
+      h("button", { class: "btn small primary", onclick: save }, "Save"),
+      saved ? h("button", { class: "btn small ghost danger", onclick: async () => {
+        await api.post(`/api/sites/${s.id}`, { [key]: "" }); toast("Removed"); drawSites(false); } }, "Remove") : null),
+    h("div", { class: "faint", style: { fontSize: "12px" } }, saved ? "A token is saved." : "No token saved yet."));
 }
 
 let openAccount = new Set();

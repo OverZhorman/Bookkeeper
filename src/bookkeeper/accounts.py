@@ -46,6 +46,23 @@ def forget_credentials(site_id: str) -> None:
     (_dir() / f"{site_id}.login").unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------- secret site settings (API tokens)
+def secret_setting(site_id: str, key: str) -> str:
+    """A site setting marked "secret" (an API token): kept encrypted next to saved passwords, not in the library."""
+    raw = secret.read(_dir() / f"{site_id}.{key}.secret")
+    return raw.decode("utf-8") if raw else ""
+
+
+def save_secret_setting(site_id: str, key: str, value: str) -> None:
+    value = (value or "").strip()
+    if not value:
+        (_dir() / f"{site_id}.{key}.secret").unlink(missing_ok=True)
+        return
+    if not secret.available():
+        raise RuntimeError("saving tokens needs Windows (they are encrypted with your Windows account)")
+    secret.write(_dir() / f"{site_id}.{key}.secret", value.encode("utf-8"))
+
+
 # ---------------------------------------------------------------- the session
 def session(site_id: str) -> dict | None:
     raw = secret.read(_dir() / f"{site_id}.session")

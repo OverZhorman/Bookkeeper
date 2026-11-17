@@ -295,7 +295,9 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
                 "extra_settings": getattr(cls, "extra_settings", {}),
                 "enabled": bool(row and row["enabled"]), "status": row["status"] if row else "idle",
                 "status_msg": row["status_msg"] if row else None,
-                "settings": site_settings(sid), "default_interval": cls.min_interval,
+                "settings": site_settings(sid, secrets=False), "default_interval": cls.min_interval,
+                "secrets_saved": {k: bool(accounts.secret_setting(sid, k)) for k, v in
+                                  getattr(cls, "extra_settings", {}).items() if v.get("secret")},
                 "full_done": bool(state.get("full_done")), "passes": state.get("passes", 0),
                 "counts": counts.get(sid, {"books": 0, "detailed": 0, "analyzed": 0, "first_person": 0,
                                            "with_pov": 0}),
@@ -304,7 +306,7 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
                 "login_autofill": cls.login_autofill,
                 "extension_downloads": list(cls.extension_downloads),
             })
-        return {"sites": out, "planned": PLANNED}
+        return {"sites": out, "planned": [{**p, "testable": p["id"] in diagnostics.STEPS} for p in PLANNED]}
 
     # ---------- accounts ----------
     @app.post("/api/sites/{site_id}/account")

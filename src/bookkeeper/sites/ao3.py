@@ -43,9 +43,15 @@ def _int(s: str | None) -> int | None:
     return int(digits) if digits else None
 
 
+def _original(name: str) -> bool:
+    """AO3's "Original Work", SquidgeWorld's "Original Works - Novel", "No Fandom"...: not fandoms."""
+    n = name.strip().lower()
+    return n.startswith(("original work", "no fandom")) or n.endswith("[original work]")
+
+
 def _fandom(name: str) -> str:
-    """Fandoms go into the library's Fandoms category; Original Work isn't a fandom."""
-    return "Original" if name.strip().lower() in ("original work", "original works") else f"fandom:{name}"
+    """Fandoms go into the library's Fandoms category; original works aren't a fandom."""
+    return "Original" if _original(name) else f"fandom:{name}"
 
 
 def _date(s: str) -> str | None:
@@ -73,27 +79,26 @@ def _labels(rating: str | None, warnings: list[str], categories: list[str], fand
 def _info(wid: str, title: str, authors: list[str], summary: str | None, rating: str | None, warnings: list[str],
           categories: list[str], fandoms: list[str], relationships: list[str], characters: list[str],
           freeforms: list[str], lang_code: str, block_stats: str, complete: bool | None, updated: str | None,
-          published: str | None = None) -> BookInfo:
+          published: str | None = None, base: str = BASE) -> BookInfo:
     chapters = _stat(block_stats, "chapters")
     done, _, total = chapters.partition("/")
     kudos, hits = _int(_stat(block_stats, "kudos")), _int(_stat(block_stats, "hits"))
-    original = any(f.strip().lower() in ("original work", "original works") for f in fandoms)
     return BookInfo(
-        sid=wid, url=f"{BASE}/works/{wid}", title=title or wid, authors=authors,
+        sid=wid, url=f"{base}/works/{wid}", title=title or wid, authors=authors,
         description=summary or None, lang=LANGS.get(lang_code, lang_code or None),
         status="completed" if complete else ("ongoing" if complete is False else None),
         is_translation=False, chapters=_int(done), words=_int(_stat(block_stats, "words")),
         views=hits, likes=kudos, pop_raw=kudos, adult=rating == "Explicit", age_rating=RATINGS.get(rating or ""),
         access="free", created_at=published, updated_at=updated,
         tags=_labels(rating, warnings, categories, fandoms, [*relationships, *characters, *freeforms]),
-        extra={"rating": rating, "fandoms": [f for f in fandoms if not original or _fandom(f) != "Original"],
+        extra={"rating": rating, "fandoms": [f for f in fandoms if not _original(f)],
                "planned_chapters": None if total.strip() in ("", "?") else _int(total),
                "bookmarks": _int(_stat(block_stats, "bookmarks")), "comments": _int(_stat(block_stats, "comments"))},
         complete=True,
     )
 
 
-def parse_blurb(wid: str, block: str) -> BookInfo | None:
+def parse_blurb(wid: str, block: str, base: str = BASE) -> BookInfo | None:
     """One work's card in a tag list (or a series, a user's works...)."""
     head = re.search(r'<h4 class="heading">(.*?)</h4>', block, re.S)
     if not head:
@@ -125,11 +130,11 @@ def parse_blurb(wid: str, block: str) -> BookInfo | None:
                  html_to_text(summary.group(1)) if summary else None, rating, tags("warnings"), categories, fandoms,
                  tags("relationships"), tags("characters"), tags("freeforms"), lang.group(1) if lang else "",
                  stats.group(1) if stats else "", (iswip.group(1) == "yes") if iswip else None,
-                 _date(updated.group(1)) if updated else None)
+                 _date(updated.group(1)) if updated else None, base=base)
 
 
-def parse_listing(page: str) -> list[BookInfo]:
-    return [b for b in (parse_blurb(wid, block) for wid, block in _BLURB.findall(page)) if b]
+def parse_listing(page: str, base: str = BASE) -> list[BookInfo]:
+    return [b for b in (parse_blurb(wid, block, base) for wid, block in _BLURB.findall(page)) if b]
 
 
 def last_page(page: str) -> int:
@@ -163,12 +168,12 @@ class Ao3(Site):
     def _keep(self) -> set[str]:
         return {x.strip() for x in str(self.settings.get("languages") or "en, ru, uk").split(",") if x.strip()}
 
-    @staticmethod
-    def tag_url(tag: str) -> str:
+    @classmethod
+    def tag_url(cls, tag: str) -> str:
         # AO3 writes / & . ? # in tag URLs as *s* *a* *d* *q* *h*.
         for ch, code in (("/", "*s*"), ("&", "*a*"), (".", "*d*"), ("?", "*q*"), ("#", "*h*")):
             tag = tag.replace(ch, code)
-        return f"{BASE}/tags/{quote(tag, safe='*')}/works"
+        return f"{cls.home}/tags/{quote(tag, safe='*')}/works"
 
     def _listing(self, tag: str, page: int) -> tuple[list[BookInfo], int]:
         try:
@@ -176,7 +181,7 @@ class Ao3(Site):
         except NotFound:
             return [], 0
         keep = self._keep()
-        books = parse_listing(p.text)
+        books = parse_listing(p.text, self.home)
         return [b for b in books if b.lang in keep], (last_page(p.text) if books else 0)
 
     def discover(self, state: dict):
@@ -205,7 +210,7 @@ class Ao3(Site):
     # ----- the work page (for a book added another way, or details asked for again)
     def _get(self, path: str, **kw) -> str:
         try:
-            p = self.http.get(f"{BASE}{path}", params={"view_adult": "true", **kw.pop("params", {})}, **kw)
+            p = self.http.get(f"{self.home}{path}", params={"view_adult": "true", **kw.pop("params", {})}, **kw)
         except httpx.TransportError as e:
             raise TemporaryError(f"AO3 didn't answer ({type(e).__name__})") from e
         except httpx.HTTPStatusError as e:
@@ -247,7 +252,8 @@ class Ao3(Site):
         info = _info(book["sid"], _text(title.group(1)), authors or ["Anonymous"],
                      html_to_text(summary.group(1)) if summary else None, rating, tags("warning"),
                      tags("category"), tags("fandom"), tags("relationship"), tags("character"), tags("freeform"),
-                     lang.group(1) if lang else "", st, complete, updated, _date(_stat(st, "published")))
+                     lang.group(1) if lang else "", st, complete, updated, _date(_stat(st, "published")),
+                     base=self.home)
         info.extra["toc"] = [[c.id, c.title] for c in self._index(s)[:8]]
         return info
 
@@ -263,7 +269,7 @@ class Ao3(Site):
 
     def chapters(self, book: dict) -> list[Chapter]:
         try:
-            nav = self.http.get(f"{BASE}/works/{book['sid']}/navigate").text
+            nav = self.http.get(f"{self.home}/works/{book['sid']}/navigate").text
         except NotFound:
             return []
         out = [Chapter(id=cid, title=re.sub(r"^\d+\.\s*", "", _text(t)) or f"Chapter {i + 1}", index=i)

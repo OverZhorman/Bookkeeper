@@ -184,3 +184,30 @@ def test_ao3_overloaded_page_is_not_a_bot_check():
     assert looks_like_bot_check(403, httpx.Headers({}), challenge) == "bot check"
     assert looks_like_bot_check(403, httpx.Headers({}), b"<script src='/cdn-cgi/challenge-platform/h/g/x'>") == "bot check"
     assert looks_like_bot_check(200, httpx.Headers({"cf-mitigated": "challenge"}), b"") == "Cloudflare bot check"
+
+
+def test_anubis_check_page_is_a_bot_check():
+    import httpx
+
+    from bookkeeper.http import looks_like_bot_check
+    page = ('<title>Проверяем, что вы не бот!</title><link rel="stylesheet" href="/.within.website/x/xess/xess.min.css'
+            '?cachebuster=1.22.0"><p>Защищено Anubis От Techaro.</p>').encode()
+    assert looks_like_bot_check(200, httpx.Headers({}), page) == "Anubis bot check"
+    assert looks_like_bot_check(200, httpx.Headers({}), b"<title>SquidgeWorld</title><p>Anubis the god</p>") is None
+
+
+def test_squidgeworld_is_ao3_at_its_own_address_and_names_itself():
+    from bookkeeper.sites.squidgeworld import SquidgeWorld
+    sq = "https://squidgeworld.org"
+    http = FakeHttp({f"{sq}/tags/Original%20Works%20-%20Novel/works": listing(1, 1, [
+        blurb("9", "A Novel", ["Original Works - Novel", "No Fandom"]),
+        blurb("10", "Fic", ["Star Wars - All Media Types", "Ironden [Original Work]"])])})
+    site = SquidgeWorld(http, {"tags": "Original Works - Novel", "pages": "1"})
+    (batch,) = list(site.discover({}))
+    novel, fic = batch
+    assert novel.url == f"{sq}/works/9" and novel.extra["fandoms"] == []
+    assert "Original" in novel.tags and not any(t.startswith("fandom:") for t in novel.tags)
+    assert "fandom:Star Wars - All Media Types" in fic.tags and fic.extra["fandoms"] == ["Star Wars - All Media Types"]
+    assert SquidgeWorld.tag_url("A/B") == f"{sq}/tags/A*s*B/works" and Ao3.tag_url("A").startswith(B)
+    assert SquidgeWorld.user_agent.startswith("Bookkeeper/") and "Mozilla" not in SquidgeWorld.user_agent
+    assert Ao3.user_agent is None  # AO3 itself keeps the usual one

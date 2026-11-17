@@ -99,6 +99,9 @@ class Site:
     listing_first = False
     newest_first = False
     has_text = True                           # False: catalog only (no narration check, no downloads)
+    # Sent instead of Bookkeeper's usual browser-like User-Agent, for sites that let programs in when they say what
+    # they are (Anubis bot checks do, by default).
+    user_agent: str | None = None
     # Browser extensions (in your own Waterfox) that can download this site's books, e.g. ExLoader.
     extension_downloads: tuple[str, ...] = ()
 

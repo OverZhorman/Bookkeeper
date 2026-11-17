@@ -9,6 +9,7 @@ Each site worker repeats, in order of priority:
 All requests to a site go through that site's polite HTTP client, so the pace is the same whatever it's doing."""
 import logging
 import queue
+import re
 import shutil
 import sqlite3
 import threading
@@ -40,10 +41,40 @@ DEFAULTS = {"min_interval": None, "analyze": True, "include_adult": True, "detai
 ACCOUNT_CHECK_HOURS = 6
 
 
-def site_settings(site_id: str) -> dict:
+def secret_keys(site_id: str) -> set[str]:
+    """Settings kept encrypted outside the library (API tokens), never sent to the page."""
+    return {k for k, v in getattr(SITES.get(site_id), "extra_settings", {}).items() if v.get("secret")}
+
+
+def site_settings(site_id: str, secrets: bool = True) -> dict:
     row = db.conn().execute("SELECT settings FROM sites WHERE id=?", (site_id,)).fetchone()
     extra = {k: v["default"] for k, v in getattr(SITES.get(site_id), "extra_settings", {}).items()}
-    return {**DEFAULTS, **extra, **(jload(row["settings"], {}) if row else {})}
+    out = {**DEFAULTS, **extra, **(jload(row["settings"], {}) if row else {})}
+    for key in secret_keys(site_id):
+        out[key] = accounts.secret_setting(site_id, key) if secrets else ""
+    return out
+
+
+def unavailable(e: BaseException | None) -> str | None:
+    """A short reason when an error means the site itself is down or overloaded (HTTP 5xx, no answer), not that one
+    page is wrong. Connectors may wrap it (AO3 raises TemporaryError from the HTTP error)."""
+    for x in (e, getattr(e, "__cause__", None)):
+        if isinstance(x, httpx.HTTPStatusError):
+            m = re.match(r"HTTP (5\d\d)", str(x))
+            if m:
+                return f"HTTP {m.group(1)}"
+        elif isinstance(x, httpx.TransportError):
+            return f"no answer: {type(x).__name__}"
+    return None
+
+
+def backoff(failures: int) -> int:
+    """Seconds to wait after a site was down this many times in a row: 5, 10, 20, 40, then 60 minutes."""
+    return min(3600, 300 * 2 ** max(0, failures - 1))
+
+
+def _clock(ts: float) -> str:
+    return time.strftime("%H:%M", time.localtime(ts))
 
 
 def _library_busy(e: Exception) -> bool:
@@ -68,11 +99,17 @@ class SiteWorker(threading.Thread):
         self.browser_error: str | None = None
         self.commands: queue.Queue = queue.Queue()   # account actions from the Sites page
         self._next_account_check = time.time() + 20
+        # The site's lists failing while its book pages still work (AO3): the listing waits, the rest goes on.
+        self.listing_wait_until = 0.0
+        self.listing_failures = 0
+        self.down_failures = 0                         # the whole site down: growing pauses
+        self.details_failures: dict[str, int] = {}
 
     # ---------- helpers ----------
     def _setup(self):
         s = site_settings(self.site_id)
-        self.http = Http(self.site_id, min_interval=s["min_interval"] or self.cls.min_interval, stop=self.stop)
+        self.http = Http(self.site_id, min_interval=s["min_interval"] or self.cls.min_interval, stop=self.stop,
+                         headers={"User-Agent": self.cls.user_agent} if self.cls.user_agent else None)
         # Author.Today chapters are read through Edge (Waterfox is used for logins and site tests).
         self.browser = Browser(self.site_id, engine="edge") if self.cls.needs_browser_for_text else None
         self.site = self.cls(self.http, s, self.browser)
@@ -108,6 +145,7 @@ class SiteWorker(threading.Thread):
             try:
                 try:
                     did = self.cycle()
+                    self.down_failures = 0
                     if not did:
                         self.activity = "idle"
                         self._idle(30)
@@ -126,6 +164,18 @@ class SiteWorker(threading.Thread):
                         self.activity = "library busy, retrying in a minute"
                         self.gen = None
                         self._idle(60)
+                        continue
+                    reason = unavailable(e)
+                    if reason:  # the site is down or overloaded: wait longer each time, nothing is lost
+                        self.down_failures += 1
+                        wait = backoff(self.down_failures)
+                        until = _clock(time.time() + wait)
+                        log.warning("%s unavailable (%s): %s; waiting until %s", self.site_id, reason, e, until)
+                        self._status("waiting", f"{self.cls.name} isn't answering properly ({reason}): its servers "
+                                                f"are probably overloaded. Bookkeeper tries again at {until}.")
+                        self.activity = f"site overloaded, waiting until {until}"
+                        self.gen = None
+                        self._idle(wait)
                         continue
                     # A slow or unreachable site needs one line, not a traceback.
                     where = "" if isinstance(e, httpx.TransportError) else "\n" + traceback.format_exc()
@@ -156,7 +206,26 @@ class SiteWorker(threading.Thread):
             return False
         settings = site_settings(self.site_id)
         self._status("running")
-        did = self._discovery_step(settings)
+        did = False
+        if time.time() >= self.listing_wait_until:
+            try:
+                did = self._discovery_step(settings)
+                self.listing_failures = 0
+            except Exception as e:
+                reason = unavailable(e)
+                if not reason:
+                    raise
+                # Its lists don't load (AO3's are the first to fail when it's busy): leave them for a while and go
+                # on with the books already listed. The listing resumes where it stopped.
+                self.gen = None
+                self.listing_failures += 1
+                self.listing_wait_until = time.time() + backoff(self.listing_failures)
+                log.warning("%s: its lists aren't loading (%s); trying them again at %s", self.site_id, reason,
+                            _clock(self.listing_wait_until))
+        if self.listing_wait_until > time.time():
+            self._status("running", f"{self.cls.name}'s lists aren't loading (its servers seem overloaded); Bookkeeper "
+                                    f"reads them again at {_clock(self.listing_wait_until)} and meanwhile goes on "
+                                    "with the books already listed.")
         if self.cls.listing_first and not self.state.get("full_done"):
             return did  # the first full listing of a huge, slow site comes before details and narration checks
         did = self._details_step(settings) or did
@@ -324,6 +393,9 @@ class SiteWorker(threading.Thread):
             except (Blocked, Stopped):
                 raise
             except Exception as e:
+                if unavailable(e) and self.details_failures.get(r["sid"], 0) < 2:
+                    self.details_failures[r["sid"]] = self.details_failures.get(r["sid"], 0) + 1
+                    raise  # the site is down: wait, and try this book again later
                 log.warning("%s details %s failed: %s", self.site_id, r["sid"], e)
                 db.conn().execute("UPDATE books SET meta_at=?, extra=json_set(extra, '$.details_error', ?) "
                                   "WHERE id=?", (now(), str(e)[:200], r["id"]))
@@ -345,11 +417,13 @@ class SiteWorker(threading.Thread):
             return
         except (Blocked, Stopped):
             raise
-        except TemporaryError as e:
-            log.info("%s: temporary problem reading %s: %s", self.site_id, row["sid"], e)
-            library.save_analysis(row["id"], None, f"temporary: {e}")
-            return
         except Exception as e:
+            if isinstance(e, TemporaryError) or unavailable(e):
+                log.info("%s: temporary problem reading %s: %s", self.site_id, row["sid"], e)
+                library.save_analysis(row["id"], None, f"temporary: {e}")
+                if unavailable(e):
+                    raise  # the whole site is down: stop here instead of using up the next books' tries
+                return
             log.warning("%s: could not read %s: %s", self.site_id, row["sid"], e)
             library.save_analysis(row["id"], None, f"{type(e).__name__}: {str(e)[:200]}")
             return
@@ -394,24 +468,31 @@ class SiteWorker(threading.Thread):
 
     def _queued_analysis_step(self) -> bool:
         row = db.conn().execute(
-            "SELECT b.id, b.sid, b.title, b.extra, b.meta_at FROM queue q JOIN books b ON b.id=q.book_id "
+            "SELECT b.id, b.sid, b.title, b.extra, b.meta_at, q.priority, q.requested_at FROM queue q "
+            "JOIN books b ON b.id=q.book_id "
             "WHERE b.site=? ORDER BY q.priority DESC, q.requested_at LIMIT 1", (self.site_id,)).fetchone()
         if not row:
             return False
         db.conn().execute("DELETE FROM queue WHERE book_id=?", (row["id"],))
-        if row["meta_at"] is None:
-            try:
-                info = self.site.details({"id": row["id"], "sid": row["sid"], "extra": jload(row["extra"], {})})
-                library.upsert_book(self.site_id, info, details=True)
-            except (NotImplementedError, NotFound):
-                pass
-        if self.browser_error:
-            library.save_analysis(row["id"], None, self.browser_error)
-            return True
         try:
-            self._analyse_book(row)
-        except BrowserUnavailable:
-            library.save_analysis(row["id"], None, self.browser_error)
+            if row["meta_at"] is None:
+                try:
+                    info = self.site.details({"id": row["id"], "sid": row["sid"], "extra": jload(row["extra"], {})})
+                    library.upsert_book(self.site_id, info, details=True)
+                except (NotImplementedError, NotFound):
+                    pass
+            if self.browser_error:
+                library.save_analysis(row["id"], None, self.browser_error)
+                return True
+            try:
+                self._analyse_book(row)
+            except BrowserUnavailable:
+                library.save_analysis(row["id"], None, self.browser_error)
+        except Exception as e:
+            if unavailable(e):  # the site is down: keep the request for when it's back
+                db.conn().execute("INSERT OR IGNORE INTO queue(book_id, priority, requested_at) VALUES(?,?,?)",
+                                  (row["id"], row["priority"], row["requested_at"]))
+            raise
         self.manager.dirty.add(self.site_id)
         return True
 
@@ -534,10 +615,21 @@ class Manager:
         w = self.workers.get(site_id)
         if w:
             w.browser_error = None
+            w.listing_wait_until, w.listing_failures, w.down_failures = 0.0, 0, 0
         self.poke(site_id)
 
     def update_settings(self, site_id: str, values: dict):
-        extra_keys = set(getattr(SITES[site_id], "extra_settings", {}))
+        hidden = secret_keys(site_id)
+        for key in hidden & set(values):  # an API token: encrypted on disk, and no new catalog pass for it
+            accounts.save_secret_setting(site_id, key, str(values[key] or ""))
+            w = self.workers.get(site_id)
+            if w and w.site:
+                w.site.settings[key] = str(values[key] or "").strip()
+        values = {k: v for k, v in values.items() if k not in hidden}
+        if hidden and not values:
+            self.retry(site_id)
+            return
+        extra_keys = set(getattr(SITES[site_id], "extra_settings", {})) - hidden
         current = jload(db.conn().execute("SELECT settings FROM sites WHERE id=?", (site_id,)).fetchone()["settings"], {})
         changed_scope = any(k in extra_keys and current.get(k) != v for k, v in values.items())
         current.update({k: v for k, v in values.items() if k in DEFAULTS or k in extra_keys})
