@@ -43,7 +43,7 @@ Collecting runs at a slow, steady pace, about one page every 1–2 seconds per s
 Some sites show 18+ books, or chapters you bought, only to logged-in readers. On the **Sites** page, sites that support it have an **Account** box:
 
 - **Log in…** opens the site's login page in a Waterfox window. Log in as usual: captchas, codes from e-mail and "log in with VK" all work. Bookkeeper keeps the session.
-- **Use my Waterfox login** copies the login from your own Waterfox, if you're already logged in there.
+- **Use my Waterfox login** copies the login from your own Waterfox, if you're already logged in there. This is the way for logins through Google, which refuses to sign in inside a window a program opened. Keep Waterfox open while you press it: some sites (Booknet) keep the login in a cookie that lasts only while Waterfox runs.
 - **Log in automatically with a saved password** (Author.Today, Rulate, Ficbook): Bookkeeper logs in by itself in a hidden window, and again whenever the login runs out. The password is encrypted with your Windows account and never leaves your computer.
 
 Every 6 hours Bookkeeper checks that each login still works. Logged in, it reads what your account can read: 18+ books, and the chapters you bought, which downloads then include.
@@ -54,7 +54,7 @@ Every 6 hours Bookkeeper checks that each login still works. Logged in, it reads
 | Rulate | Window, Waterfox login, or saved password (automatic) |
 | Ficbook | Window, Waterfox login, or saved password (automatic) |
 | Litnet | Window or Waterfox login (its login has several steps) |
-| Booknet | Window or Waterfox login |
+| Booknet | Waterfox login (signing in with Google works only there), or the window for e-mail logins |
 | RanobeLIB | Window (press «Войти» there) |
 
 ## Downloading with a browser extension

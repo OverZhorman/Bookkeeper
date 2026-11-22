@@ -70,7 +70,8 @@ class Litgorod(Site):
     name = "Litgorod"
     home = BASE
     lang = "ru"
-    min_interval = 2.0
+    # About one page every 2.3 seconds drew "429 Too Many Requests" after an hour (1,500 book pages): go slower.
+    min_interval = 5.0
     has_text = False
     note = ("Russian web fiction, about 36,000 books, with genres and tags. Its robots.txt keeps programs off its "
             "lists, so Bookkeeper reads its sitemap and then each book page. Catalog only for now.")

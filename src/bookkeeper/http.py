@@ -92,6 +92,19 @@ def looks_like_bot_check(status: int, headers: httpx.Headers, body: bytes) -> st
     return None
 
 
+def wait_note(headers: httpx.Headers) -> str:
+    """How long a refusing site asks programs to stay away (its Retry-After header), for the Sites page."""
+    ra = (headers.get("retry-after") or "").strip()
+    if not ra.isdigit() or int(ra) < 120:
+        return ""
+    s = int(ra)
+    if s >= 2 * 86400:
+        return f"; the site asks to wait about {round(s / 86400)} days"
+    if s >= 2 * 3600:
+        return f"; the site asks to wait about {round(s / 3600)} hours"
+    return f"; the site asks to wait about {round(s / 60)} minutes"
+
+
 class Http:
     def __init__(self, site_id: str, min_interval: float = 1.0, headers: dict | None = None,
                  cookies: dict | None = None, timeout: float = 40.0, stop: threading.Event | None = None):
@@ -159,15 +172,18 @@ class Http:
                 raise NotFound(url)
             if status == 429 or status >= 500:
                 retry_after = resp_headers.get("retry-after", "")
+                if status == 429 and retry_after.isdigit() and int(retry_after) > 300:
+                    # The site wants a long break: say so, instead of sitting silently for hours in one request.
+                    raise Blocked("rate limited (HTTP 429)" + wait_note(resp_headers))
                 delay = float(retry_after) if retry_after.isdigit() else min(120, 5 * 2 ** attempt)
                 last_error = httpx.HTTPStatusError(f"HTTP {status}", request=None, response=None)
                 if attempt < retries:
                     self._sleep(delay)
                     continue
                 if status == 429:
-                    raise Blocked("rate limited (HTTP 429)")
+                    raise Blocked("rate limited (HTTP 429)" + wait_note(resp_headers))
             if status in (401, 403):
-                raise Blocked(f"access denied (HTTP {status})")
+                raise Blocked(f"access denied (HTTP {status})" + wait_note(resp_headers))
             raise httpx.HTTPStatusError(f"HTTP {status} for {url}", request=None, response=None)
         raise last_error or RuntimeError("request failed")
 

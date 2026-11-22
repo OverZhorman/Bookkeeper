@@ -80,9 +80,13 @@ class Booknet(Site):
             "can only be read logged in.")
     login_url = f"{BASE}/auth/login"
     # Booknet's login has several ways in (e-mail, Google, Facebook), so you log in yourself once; Bookkeeper keeps
-    # the session.
+    # the session. Google refuses to sign in inside a window a program opened, so with Google the way is your own
+    # Waterfox: its login lives in a cookie that lasts while Waterfox runs, which accounts.py reads from Waterfox's
+    # session store.
     login_autofill = False
-    login_benefit = "18+ books, and the chapters you bought (Bookkeeper's downloads then include them)."
+    login_benefit = ("18+ books, and the chapters you bought (Bookkeeper's downloads then include them). If you sign "
+                     "in with Google: Google doesn't sign in inside Bookkeeper's window, so log in to Booknet in your "
+                     "own Waterfox, keep it open, and press “Use my Waterfox login”.")
     logged_in_js = "(document.querySelector('#ga-isLoggedIn') || {getAttribute: () => '0'}).getAttribute('value') === '1'"
 
     def check_login(self) -> bool | None:

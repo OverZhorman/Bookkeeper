@@ -5,7 +5,9 @@ Three ways to log in, all from the Sites page:
      e-mail and "log in with VK" all work). If you saved your login and password, Bookkeeper fills them in for you.
   2. Saved login and password: Bookkeeper logs in by itself in a hidden window, and again whenever the session runs out
      ("auto login"). The password is encrypted with your Windows account (see secret.py).
-  3. "Use my Waterfox login": copies the login from your own Waterfox, if you're already logged in there.
+  3. "Use my Waterfox login": copies the login from your own Waterfox, if you're already logged in there. That's the
+     way for logins through Google, which refuses to sign in inside a browser window a program opened. Cookies that
+     last only while Waterfox runs (many sites keep their login in one) come from Waterfox's session store.
 
 The session (cookies, plus RanobeLib's access token) is saved encrypted in data/accounts/<site>.session, and used for
 the site's requests and its browser profile."""
@@ -13,6 +15,7 @@ import json
 import logging
 import shutil
 import sqlite3
+import struct
 import tempfile
 import time
 from pathlib import Path
@@ -255,6 +258,81 @@ def login_in_browser(site_cls, interactive: bool, report=lambda msg: None) -> di
 
 
 # ---------------------------------------------------------------- your own Waterfox
+# Waterfox (like Firefox) writes cookies that have no expiry date, which last only while it runs, not to cookies.sqlite
+# but to its session store, a compressed JSON file it rewrites every few seconds while it's open.
+SESSION_FILES = ("sessionstore-backups/recovery.jsonlz4", "sessionstore-backups/recovery.baklz4",
+                 "sessionstore.jsonlz4")
+
+
+def _lz4_block(src: bytes, size: int) -> bytes:
+    """Decompress one LZ4 block: sequences of literal bytes, each followed by a copy of earlier output."""
+    out = bytearray()
+    i, n = 0, len(src)
+    while i < n:
+        token = src[i]
+        i += 1
+        length = token >> 4
+        if length == 15:
+            while True:
+                b = src[i]
+                i += 1
+                length += b
+                if b != 255:
+                    break
+        out += src[i:i + length]
+        i += length
+        if i >= n:  # the last sequence has literals only
+            break
+        offset = src[i] | (src[i + 1] << 8)
+        i += 2
+        length = token & 15
+        if length == 15:
+            while True:
+                b = src[i]
+                i += 1
+                length += b
+                if b != 255:
+                    break
+        length += 4
+        start = len(out) - offset
+        if start < 0 or offset == 0:
+            raise ValueError("corrupt LZ4 data")
+        if offset >= length:
+            out += out[start:start + length]
+        else:  # the copy overlaps what it writes: byte by byte
+            for k in range(length):
+                out.append(out[start + k])
+    return bytes(out[:size])
+
+
+def read_mozlz4(path: Path) -> bytes:
+    """A Firefox ".jsonlz4" file: "mozLz40\\0", the size, then one LZ4 block."""
+    raw = path.read_bytes()
+    if raw[:8] != b"mozLz40\0" or len(raw) < 12:
+        raise ValueError("not a Firefox session file")
+    return _lz4_block(raw[12:], struct.unpack("<I", raw[8:12])[0])
+
+
+def session_store_cookies(prof: Path) -> list[dict]:
+    """The cookies in your Waterfox's session store (the newest copy that can be read)."""
+    for rel in SESSION_FILES:
+        try:
+            data = json.loads(read_mozlz4(prof / rel))
+        except (OSError, ValueError, IndexError, struct.error):
+            continue
+        out = []
+        for c in data.get("cookies") or []:
+            attrs = c.get("originAttributes") or {}
+            if c.get("isPartitioned") or attrs.get("userContextId") or attrs.get("privateBrowsingId"):
+                continue  # third-party partitions, container tabs and private windows aren't your normal login
+            if c.get("name") and c.get("host"):
+                out.append({"name": c["name"], "value": c.get("value", ""), "domain": c["host"],
+                            "path": c.get("path") or "/", "secure": bool(c.get("secure")),
+                            "httpOnly": bool(c.get("httponly")), "expires": None})
+        return out
+    return []
+
+
 def import_from_user_waterfox(site_cls) -> dict:
     """Copy this site's login cookies from your own Waterfox profile (it can stay open)."""
     prof = user_profile_dir()
@@ -283,6 +361,13 @@ def import_from_user_waterfox(site_cls) -> dict:
             continue
         cookies.append({"name": name, "value": value, "domain": host, "path": path or "/", "secure": bool(secure),
                         "httpOnly": bool(http_only), "expires": int(exp) if exp else None})
+    # Cookies that last only while Waterfox runs (Booknet keeps its login in one) are in the session store instead.
+    seen = {(c["domain"], c["path"], c["name"]) for c in cookies}
+    for c in session_store_cookies(prof):
+        key = (c["domain"], c["path"], c["name"])
+        if key not in seen and domains_match(c["domain"], domains) and _site_cookie(c["name"]):
+            seen.add(key)
+            cookies.append(c)
     if not cookies:
         raise RuntimeError(f"your Waterfox has no login for {site_cls.name}. Log in there first, or use “Log in…”")
     return {"cookies": cookies, "user_agent": _waterfox_user_agent(), "at": now(), "how": "waterfox"}
