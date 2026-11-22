@@ -463,3 +463,10 @@ code, .mono { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; f
 .airow.bad { opacity: .75; cursor: default; }
 .aipreview .warn, .aisum .warn { color: var(--danger); }
 .aipreview .fixed { color: var(--include); font-weight: 600; display: inline; }
+
+/* what one import changed */
+.changebox { margin: 0 0 6px 12px; }
+.changebox > summary { cursor: pointer; }
+.changes { display: grid; gap: 8px; margin-top: 6px; max-height: 420px; overflow: auto; }
+.changes .airow { flex-wrap: wrap; cursor: default; overflow-wrap: anywhere; }
+.lrows > * { min-width: 0; }

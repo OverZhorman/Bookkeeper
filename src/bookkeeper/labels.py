@@ -318,6 +318,8 @@ def apply_many(entries, new_tags=(), links=(), tag_entries=None) -> dict:
             "previous_entries": previous_entries}
 
 
+IMPORTS_KEPT = 100  # imports that can still be undone (an automatic run makes one per batch)
+
 AI_PROMPT = """\
 I keep a personal catalog of web novels collected from book sites (Wattpad, Author.Today, Ficbook, Litnet,
 RanobeLib and others). Every site tags books its own way, and my app maps those tags onto one list of shared
@@ -373,10 +375,11 @@ def _shared_tag_lines(c) -> list[str]:
     return lines
 
 
-def export_for_ai(site: str | None = None, q: str = "", limit: int = 250) -> dict:
-    """A prompt for an AI chat: the most common unrecognized labels (with hints) and the shared tags."""
+def export_for_ai(site: str | None = None, q: str = "", limit: int = 250, exclude=()) -> dict:
+    """A prompt for an AI chat: the most common unrecognized labels (with hints) and the shared tags.
+    `exclude`: label keys to leave out (the ones an automatic run already sent)."""
     c = db.conn()
-    groups = _groups(c, site, q)
+    groups = [g for g in _groups(c, site, q) if g["key"] not in exclude]
     page = groups[:max(1, limit)]
     ctx = _context(c)
     lines = []
@@ -394,7 +397,8 @@ def export_for_ai(site: str | None = None, q: str = "", limit: int = 250) -> dic
         lines.append(json.dumps(item, ensure_ascii=False))
     text = (AI_PROMPT + "\nSHARED TAGS (id | English | Russian | category | meaning)\n" + "\n".join(_shared_tag_lines(c))
             + f"\n\nSITE LABELS ({len(page)}, one JSON object per line)\n" + "\n".join(lines) + "\n")
-    return {"text": text, "count": len(page), "total": len(groups), "chars": len(text)}
+    return {"text": text, "count": len(page), "total": len(groups), "chars": len(text),
+            "keys": [g["key"] for g in page]}
 
 
 def _objects(text: str) -> list[dict]:
@@ -611,16 +615,57 @@ def apply_import(text: str, keys=None, new_ids=None) -> dict:
     if not entries:
         raise ValueError("Nothing to apply: tick at least one answer.")
     result = apply_many(entries, [new_tag_entry(t) for t in make], links)
-    record = {"id": now().replace(":", "").replace("-", ""), "at": now(), "labels": result["previous"],
-              "links": result["links"], "new_tags": sorted(made), "count": result["labels"], "books": result["books"]}
-    db.set_setting("label_imports", [record, *db.get_setting("label_imports", [])][:30])
+    record = {"id": new_import_id(db.get_setting("label_imports", [])), "at": now(), "labels": result["previous"],
+              "after": dict(entries), "links": result["links"], "new_tags": sorted(made), "count": result["labels"],
+              "books": result["books"]}
+    db.set_setting("label_imports", [record, *db.get_setting("label_imports", [])][:IMPORTS_KEPT])
     return {**result, "import": record["id"], "new_tags": len(make)}
+
+
+def new_import_id(records) -> str:
+    """The time, made unique: an automatic run can apply two imports within one second."""
+    base, taken = now().replace(":", "").replace("-", ""), {r.get("id") for r in records}
+    return next(i for i in (base, *(f"{base}-{n}" for n in range(2, 10000))) if i not in taken)
 
 
 def imports() -> list[dict]:
     """Your imports of AI answers, newest first."""
     return [{k: r.get(k) for k in ("id", "at", "count", "books", "new_tags", "undone")}
             for r in db.get_setting("label_imports", [])]
+
+
+def _meaning(ids) -> dict:
+    """What a label means, for showing: no fix (Bookkeeper reads it itself), hidden, or these tags."""
+    if ids is None:
+        return {"state": "none"}
+    if not ids:
+        return {"state": "hidden"}
+    return {"state": "tags", "tags": [{"id": i, "label": T.info(i)["label"]} for i in ids]}
+
+
+def import_changes(setting: str, import_id: str) -> dict:
+    """Everything one import changed, for showing: each label's meaning before and after, the links it added or
+    removed, the names and descriptions it changed and the tags it made. Imports made before Bookkeeper kept the
+    "after" side show what the labels mean now instead."""
+    rec = next((r for r in db.get_setting(setting, []) if r.get("id") == import_id), None)
+    if not rec:
+        raise ValueError("That import is too old to show.")
+    after = rec.get("after")
+    now_fixes = {T.key(k): v for k, v in T.fixes().items()}
+    name = lambda i: T.info(i)["label"]  # noqa: E731
+    def after_of(label: str) -> dict:
+        if after is not None:
+            return _meaning(after.get(label))
+        if rec.get("undone"):  # what it meant now has nothing to do with this import any more
+            return {"state": "unknown"}
+        return _meaning(now_fixes.get(T.key(label)))
+    rows = [{"label": label, "before": _meaning(before), "after": after_of(label)}
+            for label, before in (rec.get("labels") or {}).items()]
+    rows.sort(key=lambda r: T.key(r["label"]))
+    links = [{"kind": k, "tag": name(a), "other": name(b), "on": bool(on)} for k, a, b, on in rec.get("links") or []]
+    edits = [{**e, "tag": name(e["tag"])} for e in rec.get("edits") or []]
+    return {"labels": rows, "links": links, "edits": edits, "new_tags": [name(i) for i in rec.get("new_tags") or []],
+            "edit_count": rec.get("edit_count") or 0, "now": after is None, "undone": bool(rec.get("undone"))}
 
 
 def undo_import(import_id: str) -> dict:

@@ -7,8 +7,8 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .. import (__version__, accounts, browser, config, db, diagnostics, export, handoff, labels, library, search,
-               tagai, tagedit)
+from .. import (__version__, accounts, autoai, browser, config, db, diagnostics, export, handoff, labels, library,
+               search, tagai, tagedit)
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -34,12 +34,24 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
             host = (request.headers.get("host") or "").rsplit(":", 1)[0].lower()
             if host not in LOCAL_HOSTS:
                 return JSONResponse({"error": "Bookkeeper only answers this computer"}, status_code=403)
+        if request.url.path.startswith("/api/ai/web/"):
+            # The Bookkeeper userscript in your Gemini tab: it comes from gemini.google.com, so it proves itself
+            # with the secret token written into your copy of the script instead.
+            from .. import geminiweb
+            if request.url.path != "/api/ai/web/userscript.user.js" and \
+                    not geminiweb.token_ok(request.headers.get("x-bookkeeper-token")):
+                return JSONResponse({"error": "wrong or missing token"}, status_code=403)
+            return await call_next(request)
         origin = request.headers.get("origin")
         if origin and request.method not in ("GET", "HEAD"):
             o_host = origin.split("://", 1)[-1].rsplit(":", 1)[0].lower()
             if o_host not in LOCAL_HOSTS and not lan:
                 return JSONResponse({"error": "requests from other sites are not allowed"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # Ask the server each time (it answers "unchanged" cheaply), so a new version shows after a restart
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/")
     def index():
@@ -170,6 +182,13 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
     def label_imports():
         return labels.imports()
 
+    @app.get("/api/labels/import/changes")
+    def label_import_changes(id: str = ""):
+        try:
+            return labels.import_changes("label_imports", id)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
     @app.post("/api/labels/import/undo")
     def label_import_undo(body: dict = Body(...)):
         try:
@@ -208,6 +227,13 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
     def tagai_imports():
         return tagai.imports()
 
+    @app.get("/api/tagai/import/changes")
+    def tagai_import_changes(id: str = ""):
+        try:
+            return labels.import_changes("tag_imports", id)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
     @app.post("/api/tagai/undo")
     def tagai_undo(body: dict = Body(...)):
         try:
@@ -219,6 +245,71 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
     def tagai_forget():
         tagai.forget_reviewed()
         return {"ok": True}
+
+    # The same requests, sent to the Gemini API by Bookkeeper itself, batch after batch (see autoai.py).
+    @app.get("/api/ai")
+    def ai_status():
+        return autoai.status()
+
+    @app.post("/api/ai/settings")
+    def ai_settings(body: dict = Body(...)):
+        try:
+            if "key" in body:
+                autoai.set_key(str(body.get("key") or ""))
+            autoai.save_settings(body.get("model"), body.get("thinking"), body.get("provider"), body.get("web_mode"))
+        except (ValueError, OSError) as e:
+            raise HTTPException(400, str(e))
+        return autoai.status()
+
+    @app.get("/api/ai/models")
+    def ai_models():
+        try:
+            return autoai.models()
+        except autoai.ApiError as e:
+            raise HTTPException(400, str(e))
+
+    # The userscript in your Gemini tab (see geminiweb.py): it installs from here, then asks for batches.
+    @app.get("/api/ai/web/userscript.user.js")
+    def ai_userscript(request: Request):
+        # Other sites can't read it (no CORS headers), and the host check above keeps out trick DNS names.
+        from .. import geminiweb
+        base = f"{request.url.scheme}://{request.url.netloc}"
+        return Response(geminiweb.userscript(base), media_type="text/javascript; charset=utf-8",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/ai/web/job")
+    def ai_web_job(tab: str = "", v: int = 0):
+        from .. import geminiweb
+        return {"job": geminiweb.next_job(tab, v)}
+
+    @app.post("/api/ai/web/report")
+    def ai_web_report(body: dict = Body(...)):
+        from .. import geminiweb
+        text = body.get("text")
+        return {"ok": geminiweb.report(str(body.get("tab") or ""), str(body.get("id") or ""), body.get("step"),
+                                       None if text is None else str(text), body.get("error"),
+                                       bool(body.get("fatal")))}
+
+    @app.post("/api/ai/run")
+    def ai_run(body: dict = Body(...)):
+        try:
+            return autoai.start(str(body.get("kind") or ""), max(1, min(int(body.get("limit") or 250), 5000)),
+                                int(body.get("max_batches") or 0), str(body.get("site") or ""),
+                                str(body.get("q") or "")[:500], str(body.get("cat") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/ai/stop")
+    def ai_stop():
+        autoai.stop()
+        return autoai.status()
+
+    @app.post("/api/ai/undo")
+    def ai_undo(body: dict = Body(...)):
+        try:
+            return autoai.undo_run(str(body.get("id") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/labels/fix")
     def label_fix(body: dict = Body(...)):

@@ -606,3 +606,11 @@ def Browser(site_id: str, headless: bool = True, engine: str | None = None) -> B
     if engine == "waterfox":
         return WaterfoxBrowser(site_id, headless)
     return EdgeBrowser(site_id, headless)
+
+
+def reader_browser(site_id: str) -> BaseBrowser:
+    """The hidden browser that reads chapter text (Author.Today), with the engine chosen on the Sites page. In
+    Waterfox it has a profile of its own, so it never stands in the way of a login window or a site test."""
+    if engine_choice() == "waterfox":
+        return WaterfoxBrowser(site_id, profile=config.BROWSER_PROFILE_DIR / "waterfox" / f"{site_id}-reader")
+    return EdgeBrowser(site_id)

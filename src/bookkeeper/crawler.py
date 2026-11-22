@@ -22,7 +22,7 @@ from . import accounts, config, db, library, matching
 from .analysis.pov import analyse
 from .analysis.themes import VERSION as THEMES_VERSION
 from .analysis.themes import detect as detect_themes
-from .browser import Browser, BrowserUnavailable
+from .browser import Browser, BrowserUnavailable, reader_browser
 from .db import jdump, jload, now
 from .http import Blocked, Http, NotFound, Stopped
 from .sites import SITES
@@ -110,8 +110,8 @@ class SiteWorker(threading.Thread):
         s = site_settings(self.site_id)
         self.http = Http(self.site_id, min_interval=s["min_interval"] or self.cls.min_interval, stop=self.stop,
                          headers={"User-Agent": self.cls.user_agent} if self.cls.user_agent else None)
-        # Author.Today chapters are read through Edge (Waterfox is used for logins and site tests).
-        self.browser = Browser(self.site_id, engine="edge") if self.cls.needs_browser_for_text else None
+        # Author.Today chapters are read in a hidden browser: Waterfox when it's installed (see the Sites page)
+        self.browser = reader_browser(self.site_id) if self.cls.needs_browser_for_text else None
         self.site = self.cls(self.http, s, self.browser)
         if self.cls.login_url and accounts.apply(self.site, self.http) and self.browser:
             self.browser.initial_cookies = (accounts.session(self.site_id) or {}).get("cookies") or []

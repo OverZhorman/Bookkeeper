@@ -54,6 +54,7 @@ Every 6 hours Bookkeeper checks that each login still works. Logged in, it reads
 | Rulate | Window, Waterfox login, or saved password (automatic) |
 | Ficbook | Window, Waterfox login, or saved password (automatic) |
 | Litnet | Window or Waterfox login (its login has several steps) |
+| Booknet | Window or Waterfox login |
 | RanobeLIB | Window (press «Войти» there) |
 
 ## Downloading with a browser extension
@@ -66,7 +67,7 @@ Some sites don't let you download even what you bought, but browser extensions c
 
 ## Waterfox
 
-Bookkeeper uses Waterfox (or Firefox) for logins and site tests when it is installed, and Microsoft Edge otherwise. It runs its own Waterfox profile in `data\browser-profile\waterfox`, so your normal profile, tabs and extensions aren't touched. The choice, the Waterfox program and your downloads folder can be changed on the Sites page under **Browser**. Author.Today chapters are still read through Edge.
+Bookkeeper uses Waterfox (or Firefox) for logins and site tests when it is installed, and Microsoft Edge otherwise. It runs its own Waterfox profile in `data\browser-profile\waterfox`, so your normal profile, tabs and extensions aren't touched. The choice, the Waterfox program and your downloads folder can be changed on the Sites page under **Browser**. Author.Today chapters are read the same way, in a hidden Waterfox with a profile of its own (`data\browser-profile\waterfox\authortoday-reader`).
 
 ## How narration is detected
 
@@ -93,7 +94,7 @@ You can filter by each of these sources.
 | Site | Status |
 |---|---|
 | RanobeLIB | ✅ Working |
-| Author.Today | ✅ Working. Chapter text is read through Microsoft Edge on your computer, because the site scrambles it for anything that isn't a browser |
+| Author.Today | ✅ Working. Chapter text is read in a hidden Waterfox on your computer (Edge if Waterfox isn't installed), because the site scrambles it for anything that isn't a browser |
 | Flibusta | ✅ Working: the whole library (over 700,000 books) from Flibusta's catalog file, then genres page by page and descriptions in the background. Pick the languages in the site's settings (Russian, Ukrainian, Belarusian and English to begin with). Downloads use Flibusta's own FB2/EPUB files |
 | Litnet | ✅ Working (Russian and Ukrainian books) |
 | Wuxia.click | ✅ Working (English translations, with NovelUpdates-style tags) |
@@ -116,10 +117,36 @@ You can filter by each of these sources.
 | Scryer (FanFiction.net) | ✅ Catalog only. FanFiction.net blocks Bookkeeper, but the DLP community's search engine Scryer lists its stories with everything FanFiction.net shows, plus content tags of its own. Bookkeeper reads the fandoms you choose (Sites → Scryer → Settings), most favorited first. Log in to Scryer (Sites page) to read 5,000 stories per fandom instead of 1,250 |
 | Ficdb | ✅ Catalog only: stories from SpaceBattles, Sufficient Velocity, Questionable Questing, AO3, FanFiction.net, Scribble Hub and Royal Road, with the tags Ficdb's users add. Bookkeeper reads the tags you choose, highest rated first, through the limited search Ficdb gives programs, slowly |
 | Hardcover | ✅ Catalog only: published books with readers' genres, moods, content warnings and tags, through Hardcover's official API. It needs your own Hardcover API token: Sites → Hardcover → Settings has a link that makes a read-only one (only “read:catalog”, which can't see or change your account). Paste it there; it's encrypted with your Windows account. By default Bookkeeper reads the Web Novel and Light Novel categories and a few tags (LitRPG, Progression Fantasy…) |
-| Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, The StoryGraph, LibraryThing, Romance.io | Show a bot check (most of them Cloudflare's); Bookkeeper doesn't get around those |
 | SquidgeWorld Archive | ✅ Working, like AO3 (it runs AO3's software): Bookkeeper reads the tags and fandoms you choose, by default its original-work fandoms and a few tags (First Person, LitRPG, Isekai…). Its “are you a bot?” check (Anubis) lets in programs that say what they are, so on this site Bookkeeper introduces itself as Bookkeeper instead of as a browser |
+| Booknet | ✅ Working: Ukrainian web fiction, about 27,000 books, with tags, on the platform Litnet grew from. 18+ books can only be read logged in (Sites page → Booknet → Account) |
+| Litmarket | ✅ Catalog only for now: Russian web fiction, about 108,000 e-books, with genres, hashtags, annotations, views and likes, all from its catalog pages. Its reader loads the text through its own app, which Bookkeeper doesn't read yet |
+| Prodaman | ✅ Working: Russian web fiction, about 20,000 books, with categories and hashtags. Its reader shows a book in long pages, and each page becomes a chapter |
+| Litgorod | ✅ Catalog only for now: Russian web fiction, about 36,000 books, with genres and tags. Its robots.txt keeps programs off its lists, so Bookkeeper reads its sitemap and then each book page |
+| Bookriver | ✅ Catalog only: Russian web fiction, about 26,000 books (mostly romance), with genres and tags. Its robots.txt keeps programs off the reader's chapters |
+| Fanfics.me | ✅ Working: a Russian fan fiction archive, about 76,000 works, with fandoms, characters, genres, warnings and “events” tags, all from its search list |
+| Ranobe.me | ✅ Catalog only for now: Russian translations of web novels, about 600, on Fanfics.me's engine |
+| NovelKlo | ✅ Catalog only for now: a young Ukrainian platform for original fiction and fan fiction, about 1,300 books, with genres, tags and fandoms (18+ books show their genres only) |
+| Fantlab | ✅ Catalog only: the big Russian science fiction and fantasy database. Bookkeeper reads each classifier genre's novels, most-rated first, then each novel's classifier voted by readers (genres, setting, time, plot devices, plot linearity, reader age) through Fantlab's open API. Fantlab shows visitors 50 results per search, so Bookkeeper splits its searches by year |
+| NovelFire | ✅ Catalog only: English translations of Chinese, Korean and Japanese web novels, about 23,000, with NovelUpdates-style tags. Its chapter pages send readers on to other sites, so Bookkeeper doesn't read them |
+| GoodNovel | ✅ Working: English web novels with tags (System, Level up, First Person POV…), up to 2,000 of the most popular in each genre. Most books sell their later chapters, so narration checks and downloads use the free first ones |
+| Sunset | ✅ Working, like AO3 (it runs AO3's software): a femslash archive, about 7,000 works. By default Bookkeeper reads its F/F tag, which nearly every work has |
+| Sufficient Velocity | ✅ Working: stories posted on the forum, with threadmarks and tags (setting, genre, content, character), from the forums you choose (Sites → Sufficient Velocity → Settings). A download holds the threadmarked posts, ten to a chapter |
+| Royal Road, NovelUpdates, Scribble Hub, FanFiction.net, The StoryGraph, LibraryThing, Romance.io, Honeyfeed, Literotica, Ranobes (English) | Show a bot check (most of them Cloudflare's); Bookkeeper doesn't get around those |
+| SpaceBattles, FictionPress | Their lists open, but their story pages show programs a Cloudflare check |
+| LiveLib | Its book pages answer programs with a DDoS-Guard block |
+| Litsovet | Its robots.txt keeps programs off its tag pages and every list page after the first |
+| Litres | Behind DDoS-Guard, and its robots.txt leaves programs only its sitemaps. Not written yet |
+| Goodreads | Its robots.txt keeps programs off its book, search and API pages |
+| Ad Astra, CFA Archive | An Anubis check like SquidgeWorld's: letting Bookkeeper say what it is there needs your OK first |
+| Superlove, Novelpia | Their robots.txt asks every program to stay off the whole site |
+| Questionable Questing | Runs the same forum software as Sufficient Velocity. Connector coming next |
+| ISFDB | Asks programs to wait 1,000 seconds between pages; its weekly database download (with readers' tags) is the way. Not written yet |
+| TV Tropes | Trope lists for every work, but long lists are split over subpages and its texts may only be reused non-commercially. Not written yet |
+| Shōsetsuka ni Narō, Kakuyomu, JJWXC | The Japanese and Chinese originals of many translated web novels, with their authors' tags. They wait for matching originals to their translations |
+| WLNUpdates | Answered with server errors when tested |
 | Open Library | Shows programs a “verify you're human” page and keeps them off its search and API in robots.txt |
 | VNDB (visual novels) | Asks programs not to crawl its pages; a connector would use its free API or database downloads |
+| MangaLib, ReManga, MangaDex, MangaUpdates, AniList, Shikimori, MyAnimeList | Manga and anime, for later. They're on the Sites page under **Coming next** with what each needs (MangaLib runs on RanobeLib's API; AniList's terms allow lookups only) |
 
 If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and says so on the Sites page. It doesn't keep retrying.
 
@@ -192,6 +219,27 @@ Many site labels end up as aliases of a broad tag although they name something n
 
 Check the answers, untick any you don't want, and apply. Tags you applied an answer for are marked as reviewed, so the next request brings the next ones (tick **again, with reviewed tags** to include them). Every import can be undone as a whole under **Earlier imports**.
 
+### Letting Bookkeeper run the AI requests by itself
+
+Both AI panels have a third part, **Or let Bookkeeper run it by itself**. It does the copy, paste and apply loop for you while you're away: it sends a batch to Gemini, applies every answer that passes the check (without asking), and sends the next batch, until nothing is left, you press **Stop**, the number of batches you set is done, or Gemini's limit runs out. Under **Send the requests to** pick one of two ways.
+
+**The Gemini website** uses your Gemini subscription, through a userscript in your own browser:
+
+1. Your browser needs a userscript extension (Tampermonkey or Violentmonkey). Press **Install the userscript**: it's your own copy, with a key that lets it talk to this Bookkeeper and nothing else.
+2. Press **Open Gemini**, signed in as usual, and keep that tab open while a run goes (a window of its own is best). The panel shows when the tab is connected.
+3. Type the **mode** as Gemini's mode menu names it (for example *Neon High*), or leave it empty to keep the tab's mode.
+4. Pick the batch size above, then press **Start**. For each batch the tab opens a new chat, picks the mode, attaches the request as a file, sends it, waits for the whole answer and hands it back; Bookkeeper applies it and waits 30 seconds.
+
+When the tab isn't signed in, or Gemini shows a usage limit, the run stops and says so. Automating the Gemini website may go against Google's terms for it, so you use it at your own risk.
+
+**The Gemini API** needs an API key:
+
+1. Make an API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it under **Gemini API**. It is encrypted with your Windows account and only sent to Google's API. API use is billed (or limited, on a free key) separately from a Gemini app subscription.
+2. Pick a **model** from the list of models your key can use, and how much it should **think**.
+3. Pick the batch size above, then press **Start**.
+
+The panel shows each batch as it finishes. Every batch is a normal import you can undo, and **Undo this whole run** undoes them all. The run stops by itself when two batches in a row change nothing. Labels or tags the model skipped are sent once more, then left for you. The model's answers are saved in `data/ai-runs`.
+
 ## Editing tags
 
 Open **Tags** in the top bar and click a tag, then **✎ Edit tag**. There you can change:
@@ -238,7 +286,7 @@ Bookkeeper is for your personal reading. It reads what the sites show to any vis
 
 ## Troubleshooting
 
-- **"No usable browser found"** on the Author.Today card: Bookkeeper needs Microsoft Edge (built into Windows) or Google Chrome.
+- **"No usable browser found"** on the Author.Today card: Bookkeeper needs Waterfox (or Firefox), or else Microsoft Edge (built into Windows) or Google Chrome.
 - **Waterfox isn't found**: enter the path to `waterfox.exe` on the Sites page under **Browser**.
 - **A login doesn't work**: press **Log in…** and log in yourself in the window; the Account box shows what went wrong.
 - **A site shows "Blocked"**: check that the site opens in your normal browser, then press **Try again** on its card. If it's blocked all the time, raise the pause between requests in that site's settings.

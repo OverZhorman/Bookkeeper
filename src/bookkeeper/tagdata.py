@@ -636,6 +636,17 @@ MORE_SYNONYMS: dict[str, list[str]] = {
     "gender-bender": ["male to female", "из мужчины в женщину", "cross-dressing", "кроссдрессинг"],
 }
 
+# Fantlab's classifier (0.5): science fiction kinds, time travel and its "reader age" part.
+for _tid, _names in {
+    "sci-fi": ["«твёрдая» научная фантастика", "«мягкая» (гуманитарная) научная фантастика", "твёрдая научная фантастика",
+               "мягкая научная фантастика"],
+    "time-travel": ["темпоральная фантастика, хроноопера", "темпоральная фантастика", "хроноопера"],
+    "children": ["возраст читателя: детская литература"],
+    "young-adult": ["возраст читателя: подростковая литература"],
+    "adult": ["возраст читателя: только для взрослых"],
+}.items():
+    MORE_SYNONYMS.setdefault(_tid, []).extend(_names)
+
 # Labels that mean several tags at once (added to tags.COMPOUND). Listing the label itself keeps it as its own tag.
 MORE_COMPOUND: dict[str, list[str]] = {
     "ожп": ["oc", "female-lead"],

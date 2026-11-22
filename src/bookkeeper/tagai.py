@@ -133,10 +133,11 @@ def candidates(q: str = "", category: str = "", reviewed: bool = False) -> list[
     return sorted(out, key=lambda t: (t not in exact, -_size(t), t))
 
 
-def export(q: str = "", category: str = "", reviewed: bool = False, limit: int = 600) -> dict:
-    """A request for an AI chat: tags with their aliases, about `limit` aliases in all, and the shared tags."""
+def export(q: str = "", category: str = "", reviewed: bool = False, limit: int = 600, exclude=()) -> dict:
+    """A request for an AI chat: tags with their aliases, about `limit` aliases in all, and the shared tags.
+    `exclude`: tag ids to leave out (the ones an automatic run already sent)."""
     c = db.conn()
-    pool = candidates(q, category, reviewed)
+    pool = [t for t in candidates(q, category, reviewed) if t not in exclude]
     batch, n, aliases_n = [], 0, 0
     for tid in pool:
         size = min(_size(tid), MAX_ALIASES_PER_TAG)
@@ -171,7 +172,7 @@ def export(q: str = "", category: str = "", reviewed: bool = False, limit: int =
             + "\n".join(labels._shared_tag_lines(c))
             + f"\n\nTAGS TO IMPROVE ({len(batch)}, one JSON object per line)\n" + "\n".join(lines) + "\n")
     return {"text": text, "tags": len(batch), "aliases": aliases_n, "total": len(pool), "chars": len(text),
-            "reviewed": len(_reviewed())}
+            "reviewed": len(_reviewed()), "ids": batch}
 
 
 # ---------------------------------------------------------------- reading the reply
@@ -474,11 +475,13 @@ def apply(text: str, keys=None, new_ids=None) -> dict:
         raise ValueError("Nothing to apply: tick at least one change.")
     result = labels.apply_many(entries, [labels.new_tag_entry(t) for t in make], links, tag_entries)
     _mark_reviewed(reviewed)
-    record = {"id": now().replace(":", "").replace("-", ""), "at": now(), "labels": result["previous"],
+    record = {"id": labels.new_import_id(db.get_setting("tag_imports", [])), "at": now(),
+              "labels": result["previous"],
               "links": result["links"], "new_tags": sorted(made), "reviewed": reviewed,
-              "tag_entries": result["previous_entries"], "count": result["labels"],
+              "tag_entries": result["previous_entries"], "count": result["labels"], "after": dict(entries),
+              "edits": [{"tag": x["tag"], "field": x["field"], "old": x["old"], "new": x["new"]} for x in edits],
               "link_count": len(result["links"]), "edit_count": len(edits), "books": result["books"]}
-    db.set_setting("tag_imports", [record, *db.get_setting("tag_imports", [])][:30])
+    db.set_setting("tag_imports", [record, *db.get_setting("tag_imports", [])][:labels.IMPORTS_KEPT])
     return {"labels": result["labels"], "books": result["books"], "links": len(result["links"]),
             "new_tags": len(made), "edits": len(edits), "reviewed": len(reviewed), "import": record["id"]}
 

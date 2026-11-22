@@ -992,14 +992,14 @@ async function drawBrowserBox() {
   el.replaceChildren(h("details", { class: "settings browserbox", open: store.get("browserBoxOpen", false), ontoggle: (e) => store.set("browserBoxOpen", e.target.open) },
     h("summary", {}, `Browser: ${d.engine}`, d.waterfox ? "" : " (Waterfox not found)"),
     h("div", { class: "body" },
-      h("div", { class: "field" }, h("label", {}, "Browser for logins and site tests"),
+      h("div", { class: "field" }, h("label", {}, "Browser for logins, site tests and reading Author.Today chapters"),
         h("select", { class: "input", onchange: (e) => save("browser", e.target.value) },
           [["auto", "Waterfox when installed, otherwise Edge"], ["waterfox", "Waterfox (or Firefox)"], ["edge", "Microsoft Edge"]].map(([v, l]) => h("option", { value: v, selected: (st.browser || "auto") === v }, l)))),
       h("div", { class: "field" }, h("label", {}, "Waterfox program (leave empty to find it by itself)"),
         h("input", { class: "input", placeholder: d.waterfox || String.raw`C:\Program Files\Waterfox\waterfox.exe`, value: st.waterfox_path || "", onchange: (e) => save("waterfox_path", e.target.value) })),
       h("div", { class: "field" }, h("label", {}, "Folder your Waterfox saves downloads to (for books downloaded with an extension)"),
         h("input", { class: "input", placeholder: d.downloads_dir || "", value: st.browser_downloads_dir || "", onchange: (e) => save("browser_downloads_dir", e.target.value) })),
-      h("div", { class: "faint", style: { fontSize: "12px" } }, "Logins and site tests use their own Waterfox profile in Bookkeeper's data folder; your normal Waterfox profile isn't changed. Author.Today chapters are read through Microsoft Edge."))));
+      h("div", { class: "faint", style: { fontSize: "12px" } }, "Logins, site tests and the hidden Author.Today reader use their own Waterfox profiles in Bookkeeper's data folder; your normal Waterfox profile isn't changed. A change here reaches the Author.Today reader after Bookkeeper restarts."))));
 }
 
 // ---------- downloads page ----------
@@ -1506,6 +1506,172 @@ async function copyText(text) {
   ta.remove();
 }
 
+const GEMINI_URL = "https://gemini.google.com/app?hl=en";
+const GEMINI_TAB = "bookkeeper-gemini";
+// Letting Bookkeeper send the requests to Gemini by itself, batch after batch, while you're away: to the Gemini
+// website through a userscript in your own Gemini tab (your subscription), or to the Gemini API (an API key).
+const THINKING_WORDS = [["", "the model's default"], ["low", "low"], ["medium", "medium"], ["high", "high"]];
+const RUN_WORDS = { running: "Running", done: "Finished", stopped: "Stopped", failed: "Stopped" };
+const fmtSecs = (s) => s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
+function autoBox(kind, getParams, onApplied) {
+  const what = kind === "labels" ? "labels" : "tags";
+  let timer = null, seen = null, modelList = null, batchesOpen = false, st = null;
+  const keyIn = h("input", { class: "input", type: "password", autocomplete: "off", style: { maxWidth: "340px" } });
+  const modelSel = h("select", { class: "input", style: { width: "auto", maxWidth: "380px" } });
+  const thinkSel = h("select", { class: "input", style: { width: "auto" } }, THINKING_WORDS.map(([v, l]) => h("option", { value: v }, l)));
+  const modelInfo = h("div", { class: "faint" });
+  const keyNote = h("div", { class: "faint" });
+  const summary = h("summary", {});
+  const providerSel = h("select", { class: "input", style: { width: "auto" } },
+    h("option", { value: "web" }, "the Gemini website, through a userscript in your Gemini tab (your subscription)"),
+    h("option", { value: "api" }, "the Gemini API (needs an API key)"));
+  const modeIn = h("input", { class: "input", placeholder: "Neon High", style: { maxWidth: "220px" } });
+  providerSel.addEventListener("change", () => saveSettings({ provider: providerSel.value }));
+  modeIn.addEventListener("change", () => saveSettings({ web_mode: modeIn.value.trim() }, "Mode saved"));
+  const tabNote = h("div", {});
+  const webEl = h("div", { style: { display: "grid", gap: "10px" } },
+    h("div", { class: "field" }, h("label", {}, "The userscript"),
+      h("div", { class: "shelf" },
+        h("a", { class: "btn small primary", href: "/api/ai/web/userscript.user.js", target: "_blank", rel: "noopener",
+          title: "Your own copy, with the key that lets it talk to this Bookkeeper. Install it again if you move Bookkeeper to another port." }, "Install the userscript"),
+        h("a", { class: "btn small", href: GEMINI_URL, target: GEMINI_TAB }, "Open Gemini")),
+      h("div", { class: "faint" }, "It needs a userscript extension in your browser (Tampermonkey or Violentmonkey). Install the script, open Gemini, signed in as usual, and keep that tab open while the run goes (a window of its own is best). For each batch the tab opens a new chat, picks the mode, attaches the request as a file, sends it and hands the answer back. On a sign-in page or a usage limit the run stops. Automating the Gemini website may go against Google's terms: it's your call."),
+      tabNote),
+    h("div", { class: "field" }, h("label", {}, "Mode, as Gemini's mode menu names it"), h("div", { class: "shelf" }, modeIn),
+      h("div", { class: "faint" }, "For example “Neon High”, or leave it empty to keep whatever the tab has.")));
+  const maxIn = h("input", { class: "input", type: "number", min: 0, step: 1, value: store.get("aiMaxBatches", 0), style: { width: "80px" },
+    onchange: () => store.set("aiMaxBatches", Math.max(0, +maxIn.value || 0)) });
+  const startBtn = h("button", { class: "btn small primary", onclick: () => startRun() }, "Start");
+  const stopBtn = h("button", { class: "btn small", onclick: async () => { await api.post("/api/ai/stop"); toast("Stopping…"); draw(); } }, "Stop");
+  const runEl = h("div", {});
+  const removeBtn = h("button", { class: "btn small ghost danger", onclick: () => { if (confirm("Remove the saved API key?")) saveSettings({ key: "" }, "Key removed"); } }, "Remove");
+  const saveSettings = async (body, msg) => {
+    try { st = await api.post("/api/ai/settings", body); toast(msg || "Saved"); }
+    catch (e) { toast(String(e.message || e)); }
+    draw();
+  };
+  const describe = () => {
+    const m = (modelList || []).find((x) => x.id === modelSel.value);
+    fill(modelInfo, m ? `${m.id} · reads up to ${fmtNum(m.input)} tokens, writes up to ${fmtNum(m.output)}${m.thinking ? " · thinks before answering" : ""}` : "");
+  };
+  const loadModels = async () => {
+    fill(modelInfo, h("span", { class: "spinner tiny" }), " Asking Google which models your key can use…");
+    try { modelList = await api.get("/api/ai/models"); }
+    catch (e) { modelList = null; fill(modelInfo, h("span", { class: "warn" }, String(e.message || e))); return; }
+    const saved = st && st.model;
+    fill(modelSel, h("option", { value: "" }, "Pick a model…"),
+      saved && !modelList.some((m) => m.id === saved) ? h("option", { value: saved, selected: true }, `${saved} (not offered to your key)`) : null,
+      modelList.map((m) => h("option", { value: m.id, selected: m.id === saved, title: m.description }, m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id)));
+    describe();
+  };
+  modelSel.addEventListener("change", () => { describe(); saveSettings({ model: modelSel.value }, "Model saved"); });
+  thinkSel.addEventListener("change", () => saveSettings({ thinking: thinkSel.value }));
+  const saveKey = async () => {
+    if (!keyIn.value.trim()) { toast("Paste the key first"); return; }
+    await saveSettings({ key: keyIn.value.trim() }, "Key saved (encrypted)");
+    keyIn.value = "";
+    modelList = null; fill(modelInfo);  // the next draw asks Google which models this key can use
+  };
+  const apiEl = h("div", { style: { display: "grid", gap: "10px" } },
+    h("div", { class: "field" }, h("label", {}, "Gemini API key"),
+      h("div", { class: "shelf" }, keyIn, h("button", { class: "btn small primary", onclick: saveKey }, "Save"),
+        removeBtn),
+      keyNote),
+    h("div", { class: "field" }, h("label", {}, "Model"), h("div", { class: "shelf" }, modelSel,
+      h("button", { class: "btn small ghost", onclick: loadModels, title: "Ask Google again which models your key can use" }, "Refresh the list")), modelInfo),
+    h("div", { class: "field" }, h("label", {}, "Thinking"), h("div", { class: "shelf" }, thinkSel),
+      h("div", { class: "faint" }, "How long the model thinks before it answers (only for models that think). Higher is slower and uses more of your quota.")));
+  const settingsEl = h("details", { class: "settings" }, summary, h("div", { class: "body" },
+    h("div", { class: "field" }, h("label", {}, "Send the requests to"), h("div", { class: "shelf" }, providerSel)), webEl, apiEl));
+
+  const startRun = async () => {
+    const p = getParams();
+    const n = Math.max(0, +maxIn.value || 0);
+    const to = st.provider === "web" ? `the Gemini website${st.web_mode ? ` (${st.web_mode})` : ""}` : st.model;
+    if (!confirm(`Bookkeeper will send batches of ${p.limit} ${what} to ${to} and apply every answer that passes the check, without asking you, ${n ? `for up to ${n} batches` : "until none are left"}. Every batch can be undone, and so can the whole run. Start?`)) return;
+    try { await api.post("/api/ai/run", { kind, ...p, max_batches: n }); toast("Started"); }
+    catch (e) { toast(String(e.message || e)); draw(); return; }
+    const wt = st.web_tabs || {};
+    if (st.provider === "web" && !wt.connected) {
+      // No Gemini tab with the script yet: open one (the same tab each time, if it's still open)
+      if (!window.open(GEMINI_URL, GEMINI_TAB)) toast("Your browser blocked the Gemini tab: press “Open Gemini” in the settings");
+    }
+    draw();
+  };
+  const undoRun = async (r) => {
+    if (!confirm(`Undo all ${r.imports.length} imports of this run? Everything it changed goes back to how it was, and the tags it made are deleted.`)) return;
+    try {
+      const u = await api.post("/api/ai/undo", { id: r.id });
+      toast(`Undid ${u.undone} import${u.undone === 1 ? "" : "s"}${u.missing ? `; ${u.missing} were already undone or too old` : ""}`);
+      tagCache.clear(); onApplied();
+    } catch (e) { toast(String(e.message || e)); }
+    draw();
+  };
+  const batchRow = (b) => h("div", {}, batchHead(b), b.import ? importChanges(kind, b.import) : null);
+  const batchHead = (b) => h("div", { class: "lhead" }, h("span", {}, `Batch ${b.n}`), h("span", { class: "faint" }, new Date(b.at).toLocaleTimeString()),
+    h("span", { class: "n" }, `${fmtNum(b.sent)} sent → ${fmtNum(b.applied)} applied`), b.problems ? h("span", { class: "warn" }, `${fmtNum(b.problems)} can't be used`) : null,
+    b.new_tags ? h("span", {}, `${b.new_tags} new tag${b.new_tags === 1 ? "" : "s"}`) : null, h("span", { class: "faint" }, fmtSecs(b.seconds)),
+    b.note ? h("span", { class: "faint" }, b.note) : null);
+  const runView = (r) => {
+    const sum = r.batches.reduce((a, b) => ({ sent: a.sent + b.sent, applied: a.applied + b.applied, problems: a.problems + b.problems,
+      new_tags: a.new_tags + b.new_tags, tin: a.tin + (b.tokens_in || 0), tout: a.tout + (b.tokens_out || 0) }), { sent: 0, applied: 0, problems: 0, new_tags: 0, tin: 0, tout: 0 });
+    return h("div", { style: { display: "grid", gap: "4px", marginTop: "6px" } },
+      h("div", {}, h("b", {}, RUN_WORDS[r.state] || r.state), h("span", { class: "faint" }, ` · started ${new Date(r.started).toLocaleString()} · ${r.provider === "web" ? `Gemini website${r.model ? `, ${r.model}` : ""}` : r.model}${r.thinking ? `, thinking ${r.thinking}` : ""}`)),
+      r.step ? h("div", { class: "activity" }, h("span", { class: "dot on" }), r.step) : null,
+      r.message ? h("div", { class: r.state === "failed" ? "errbox" : "faint" }, r.message) : null,
+      r.batches.length ? h("div", { class: "faint" }, `${r.batches.length} batch${r.batches.length === 1 ? "" : "es"}: ${fmtNum(sum.sent)} ${what} sent, ${fmtNum(sum.applied)} changes applied`,
+        sum.problems ? `, ${fmtNum(sum.problems)} answers couldn't be used` : "", sum.new_tags ? `, ${sum.new_tags} new tags` : "", sum.tin ? ` · ${fmtNum(sum.tin)} tokens in, ${fmtNum(sum.tout)} out` : "") : null,
+      r.batches.length ? h("details", { open: batchesOpen, ontoggle: (e) => { batchesOpen = e.target.open; } }, h("summary", { class: "faint" }, "Each batch"),
+        r.batches.slice().reverse().map(batchRow)) : null,
+      r.imports.length && r.state !== "running" ? (r.undone ? h("div", { class: "faint" }, "This run was undone.")
+        : h("div", {}, h("button", { class: "btn small ghost danger", onclick: () => undoRun(r) }, `Undo this whole run (${r.imports.length} import${r.imports.length === 1 ? "" : "s"})`))) : null);
+  };
+  const draw = async () => {
+    clearTimeout(timer);
+    try { st = await api.get("/api/ai"); } catch (e) { fill(runEl, h("span", { class: "warn" }, String(e.message || e))); return; }
+    if (!document.body.contains(box) && seen !== null) return;  // the panel was closed
+    thinkSel.value = st.thinking || "";
+    const web = st.provider === "web";
+    providerSel.value = st.provider || "api";
+    if (document.activeElement !== modeIn) modeIn.value = st.web_mode || "";
+    webEl.style.display = web ? "grid" : "none";
+    const wt = st.web_tabs || {};
+    fill(tabNote, wt.outdated && !wt.connected ? h("span", { class: "warn" }, "A Gemini tab has an old copy of the userscript, so it gets no batches. Press “Install the userscript”, accept the update, then reload that tab.")
+      : wt.connected ? h("span", { class: "fixed" }, `✓ A Gemini tab with the script is open (asked ${wt.seen_ago} s ago)`)
+      : h("span", { class: "muted" }, "No Gemini tab with the script has asked for work in the last few minutes. Start opens one."));
+    if (web && wt.outdated && !wt.connected) settingsEl.open = true;
+    apiEl.style.display = web ? "none" : "grid";
+    keyIn.placeholder = st.has_key ? "Saved — paste a new one to replace it" : "Paste your Gemini API key here";
+    fill(keyNote, st.has_key ? "A key is saved" : "No key saved yet. ", st.has_key ? (st.encrypted ? ", encrypted with your Windows account. " : ". ") : "",
+      "Make one at ", h("a", { href: "https://aistudio.google.com/apikey", target: "_blank", rel: "noopener" }, "aistudio.google.com/apikey"),
+      ". It is only sent to Google's API.");
+    fill(summary, web ? `Gemini website${st.web_mode ? `: ${st.web_mode}` : ""}`
+      : `Gemini API: ${!st.has_key ? "no key yet" : st.model ? `${st.model}${st.thinking ? `, thinking ${st.thinking}` : ""}` : "pick a model"}`);
+    if (!web && (!st.has_key || !st.model)) settingsEl.open = true;
+    removeBtn.style.display = st.has_key ? "" : "none";
+    if (!st.has_key) { modelList = null; fill(modelSel, h("option", { value: "" }, "Save your key first")); fill(modelInfo); }
+    else if (!web && modelList === null && !modelInfo.firstChild) loadModels();
+    const run = st.runs.find((r) => r.kind === kind);
+    const mine = st.running && run && run.state === "running";
+    startBtn.disabled = st.running || (!web && (!st.has_key || !st.model));
+    startBtn.title = st.running && !mine ? "The other AI run is going: stop it first" : "";
+    stopBtn.disabled = !mine;
+    fill(runEl, run ? runView(run) : null);
+    const n = run ? `${run.id}:${run.batches.length}:${run.state}` : "";
+    if (seen !== null && n !== seen) { tagCache.clear(); onApplied(); }
+    seen = n;
+    if (st.running || (web && settingsEl.open)) timer = setTimeout(draw, st.running ? 3000 : 8000);
+  };
+  const box = h("div", { class: "aistep" }, h("span", { class: "stepn", title: "Or let Bookkeeper do steps 1 and 2 by itself" }, "↻"), h("div", { style: { display: "grid", gap: "6px" } },
+    h("div", {}, h("b", {}, "Or let Bookkeeper run it by itself"), h("span", { class: "faint" },
+      ` — it sends the request above to Gemini, applies every answer that passes the check (without asking you), and sends the next batch, until no ${what} are left or you stop it. Each batch is an import you can undo, and so is a whole run.`)),
+    settingsEl,
+    h("div", { class: "shelf" }, h("span", { class: "faint" }, "Batches (0 = until done)"), maxIn, startBtn, stopBtn),
+    runEl));
+  draw();
+  return box;
+}
+
 // Fixing labels with an AI chat (Gemini, ChatGPT…): copy a batch of labels as a prompt, paste the reply back.
 function aiPanel(getFilters, onApplied) {
   const limit = h("select", { class: "input", style: { width: "auto" } },
@@ -1595,13 +1761,69 @@ function aiPanel(getFilters, onApplied) {
       h("div", { class: "shelf", style: { marginTop: "6px" } }, h("button", { class: "btn small primary", onclick: check }, "Check the answers"),
         h("button", { class: "btn small", onclick: () => fileIn.click() }, "Load a file…"), fileIn,
         h("span", { class: "faint" }, "Copy the chat's whole reply (its code block has a copy button). If it stops halfway, paste what it wrote: the rest stays in the list.")))),
-    preview);
+    preview,
+    autoBox("labels", () => ({ ...getFilters(), limit: limit.value }), onApplied));
 }
 
 // Improving shared tags with an AI chat: their aliases become child tags, wrong ones move, links get fixed.
 const LINK_WORDS = { parent: ["is a child of", "is no longer a child of"], child: ["gets the child tag", "loses the child tag"],
   anti: ["contradicts", "no longer contradicts"], related: ["is related to (see also)", "is no longer related to"], tag: ["", ""] };
 const FIELD_WORDS = { label: "English name", label_ru: "Russian name", label_uk: "Ukrainian name", category: "category", description: "description" };
+// What one import changed (an AI run makes one per batch), loaded when you open it. Each list stays open while the
+// run view redraws.
+const changesOpen = new Set();
+function importChanges(kind, id) {
+  const url = `${kind === "tags" ? "/api/tagai" : "/api/labels"}/import/changes?id=${encodeURIComponent(id)}`;
+  const body = h("div", { class: "changes" });
+  const meaning = (m) => m.state === "unknown" ? h("span", { class: "muted" }, "not kept")
+    : m.state === "none" ? h("span", { class: "muted" }, "no fix")
+    : m.state === "hidden" ? h("span", { class: "muted" }, "hidden from every book")
+    : h("span", {}, m.tags.map((t) => t.label).join(", "));
+  const show = (c) => {
+    const limit = 300;
+    const filter = h("input", { class: "input small", placeholder: "Find a label or tag…", style: { maxWidth: "260px" } });
+    const labelList = h("div", {});
+    const drawLabels = () => {
+      const f = filter.value.trim().toLowerCase();
+      const hit = (r) => !f || r.label.toLowerCase().includes(f)
+        || [r.before, r.after].some((m) => (m.tags || []).some((t) => t.label.toLowerCase().includes(f)));
+      const rows = c.labels.filter(hit);
+      fill(labelList, rows.slice(0, limit).map((r) => h("div", { class: "airow" }, h("span", { class: "lname" }, r.label),
+        meaning(r.before), h("span", { class: "arrow" }, "→"), meaning(r.after))),
+        rows.length > limit ? h("div", { class: "faint" }, `…and ${fmtNum(rows.length - limit)} more: type above to find one`) : null,
+        !rows.length ? h("div", { class: "faint" }, "None match.") : null);
+    };
+    filter.addEventListener("input", debounce(drawLabels, 200));
+    const field = (e, v) => e.field === "category" ? (CATS[v] || v) : v;
+    fill(body,
+      c.undone ? h("div", { class: "faint" }, "This import was undone: these changes aren't in effect any more.") : null,
+      c.new_tags.length ? h("div", {}, h("b", {}, "New tags: "), c.new_tags.join(", ")) : null,
+      c.labels.length ? h("div", {}, h("div", { class: "shelf" }, h("b", {}, `${kind === "tags" ? "Aliases" : "Labels"} (${fmtNum(c.labels.length)})`),
+        c.labels.length > 15 ? filter : null),
+        c.now ? h("div", { class: "faint" }, c.undone ? "This import is from before Bookkeeper kept its change list, so only what each label meant before it is known."
+          : "This import is from before Bookkeeper kept its change list, so the right side shows what each label means now.") : null,
+        labelList) : null,
+      c.links.length ? h("div", {}, h("b", {}, `Links (${fmtNum(c.links.length)})`), c.links.map((l) => h("div", { class: "airow" },
+        h("span", { class: "lname" }, l.tag), h("span", { class: l.on ? "" : "muted" }, (LINK_WORDS[l.kind] || [l.kind, `no longer ${l.kind}`])[l.on ? 0 : 1]),
+        h("b", {}, l.other)))) : null,
+      c.edits.length ? h("div", {}, h("b", {}, `Names and descriptions (${fmtNum(c.edits.length)})`), c.edits.map((e) => h("div", { class: "airow" },
+        h("span", { class: "lname" }, e.tag), h("span", { class: "muted" }, FIELD_WORDS[e.field] || e.field),
+        h("span", { class: "faint" }, e.old ? field(e, e.old) : "—"), h("span", { class: "arrow" }, "→"), h("span", {}, field(e, e.new))))) : null,
+      !c.edits.length && c.edit_count ? h("div", { class: "faint" }, `${fmtNum(c.edit_count)} names and descriptions changed (this import is too old to list them).`) : null,
+      !c.labels.length && !c.links.length && !c.edits.length && !c.new_tags.length ? h("div", { class: "faint" }, "Nothing changed.") : null);
+    drawLabels();
+  };
+  const load = async () => {
+    if (body.firstChild) return;
+    fill(body, h("span", { class: "spinner" }));
+    try { show(await api.get(url)); } catch (e) { fill(body, h("span", { class: "warn" }, String(e.message || e))); }
+  };
+  const d = h("details", { class: "changebox", ontoggle: (e) => {
+    if (e.target.open) { changesOpen.add(id); load(); } else changesOpen.delete(id);
+  } }, h("summary", { class: "faint" }, "Show the changes"), body);
+  if (changesOpen.has(id)) { d.open = true; load(); }
+  return d;
+}
 function tagAiPanel(startQ) {
   const q = h("input", { class: "input small", value: startQ || "", placeholder: "Which tags: names or ids, separated by commas (empty: most aliases first)", style: { minWidth: "320px", flex: "1" } });
   const cat = h("select", { class: "input", style: { width: "auto" } }, h("option", { value: "" }, "All categories but fandoms"),
@@ -1706,10 +1928,11 @@ function tagAiPanel(startQ) {
     let list = [];
     try { list = await api.get("/api/tagai/imports"); } catch { /* none shown */ }
     fill(past, list.length ? h("details", {}, h("summary", { class: "faint" }, `Earlier imports (${list.length})`),
-      list.map((m) => h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()),
+      list.map((m) => h("div", {}, h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()),
         h("span", { class: "n" }, `${fmtNum(m.count)} aliases, ${fmtNum(m.link_count || 0)} links, ${m.edit_count ? `${fmtNum(m.edit_count)} names and descriptions, ` : ""}${booksText(m.books)}`),
         m.new_tags && m.new_tags.length ? h("span", { class: "faint" }, `${m.new_tags.length} new tag${m.new_tags.length === 1 ? "" : "s"}`) : null,
-        m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: () => undo(m.id) }, "Undo this import")))) : null);
+        m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: () => undo(m.id) }, "Undo this import")),
+        importChanges("tags", m.id)))) : null);
   };
   loadHistory();
   return h("div", { class: "aibox" },
@@ -1727,7 +1950,9 @@ function tagAiPanel(startQ) {
       h("div", { class: "shelf", style: { marginTop: "6px" } }, h("button", { class: "btn small primary", onclick: check }, "Check the answers"),
         h("button", { class: "btn small", onclick: () => fileIn.click() }, "Load a file…"), fileIn,
         h("span", { class: "faint" }, "Copy the chat's whole reply (its code block has a copy button).")))),
-    preview, past);
+    preview,
+    autoBox("tags", () => ({ q: q.value.trim(), cat: cat.value, limit: limit.value }), () => loadHistory()),
+    past);
 }
 
 async function renderLabels() {
@@ -1760,13 +1985,13 @@ async function renderLabels() {
     catch (e) { fill(more, h("span", { class: "warn" }, String(e.message || e))); return; }
     summary.textContent = `${fmtNum(fixes.length)} fix${fixes.length === 1 ? "" : "es"}`;
     const importRows = imports.length ? h("div", { class: "editbox", style: { marginTop: "10px" } }, h("h2", { style: { fontSize: "15px", margin: "0 0 6px" } }, "Imported from an AI chat"),
-      imports.map((m) => h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()), h("span", { class: "n" }, `${fmtNum(m.count)} labels, ${booksText(m.books)}`),
+      imports.map((m) => h("div", {}, h("div", { class: "lhead" }, h("span", {}, new Date(m.at).toLocaleString()), h("span", { class: "n" }, `${fmtNum(m.count)} labels, ${booksText(m.books)}`),
         m.new_tags && m.new_tags.length ? h("span", { class: "faint" }, `${m.new_tags.length} new tag${m.new_tags.length === 1 ? "" : "s"}`) : null,
         m.undone ? h("span", { class: "faint" }, "undone") : h("button", { class: "btn small ghost", onclick: async () => {
           if (!confirm("Undo this whole import? Its labels go back to how they were, and the tags it made are deleted.")) return;
           try { await api.post("/api/labels/import/undo", { id: m.id }); toast("Import undone"); tagCache.clear(); loadMine(); }
           catch (e) { toast(String(e.message || e)); }
-        } }, "Undo this import")))) : null;
+        } }, "Undo this import")), importChanges("labels", m.id)))) : null;
     list.replaceChildren(...[importRows, ...fixes.map((f) => labelRow({ label: f.label, books: f.books, fix: { tags: f.tags, hidden: f.hidden, separate: f.separate } }))].filter(Boolean));
     fill(more, fixes.length ? h("span", { class: "faint" }, "They're kept in the [fixes] table of my_tags.toml.") : h("span", { class: "faint" }, "No fixes yet."));
   };

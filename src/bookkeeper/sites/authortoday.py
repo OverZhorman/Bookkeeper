@@ -78,8 +78,8 @@ class AuthorToday(Site):
     lang = "ru"
     min_interval = 1.5
     needs_browser_for_text = True
-    note = ("Tags come from each book's page. Chapter text is read through Microsoft Edge on your computer, "
-            "because the site scrambles it for anything that isn't a browser.")
+    note = ("Tags come from each book's page. Chapter text is read in a hidden Waterfox on your computer (Edge if "
+            "Waterfox isn't installed), because the site scrambles it for anything that isn't a browser.")
     lists_adult = True
     extension_downloads = ("ExLoader",)
     login_url = f"{BASE}/account/login"

@@ -130,6 +130,21 @@ STEPS: dict[str, list[dict]] = {
         {"label": "forum", "url": "https://www.kubikus.ru/forum/"},
         {"label": "topic", "from": "forum", "pattern": r'href="(\./viewtopic\.php\?[^"]+|viewtopic\.php\?[^"]+)"'},
     ],
+    # Planned sites whose story or book pages showed programs a bot check (their lists didn't).
+    "spacebattles": [
+        {"label": "home", "url": "https://forums.spacebattles.com/"},
+        {"label": "catalog", "url": "https://forums.spacebattles.com/forums/creative-writing.18/"},
+        {"label": "book", "from": "catalog", "pattern": r'href="(/threads/[^"/]+\.\d+/)"'},
+    ],
+    "fictionpress": [
+        {"label": "home", "url": "https://www.fictionpress.com/"},
+        {"label": "catalog", "url": "https://www.fictionpress.com/fiction/Fantasy/"},
+        {"label": "book", "from": "catalog", "pattern": r'href="(/s/\d+/1/[^"]+)"'},
+    ],
+    "livelib": [
+        {"label": "home", "url": "https://www.livelib.ru/"},
+        {"label": "book", "from": "home", "pattern": r'href="((?:https://www\.livelib\.ru)?/book/\d+-[^"]+)"'},
+    ],
 }
 
 _runs: dict[str, dict] = {}

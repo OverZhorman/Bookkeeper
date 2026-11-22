@@ -388,7 +388,7 @@ for _source in (MORE_RULES, MORE_FAMILY):
         RULES[_tid] = list(dict.fromkeys([*RULES.get(_tid, []), *_extra]))
 
 # Bump when the built-in list changes: every book's site labels are then mapped again on the next start.
-TAGS_VERSION = 4
+TAGS_VERSION = 5
 
 # Sites name fandoms freely ("Ведьмак", "The Witcher"). Connectors pass them as "fandom:<name>": a fandom we know
 # becomes its shared tag, any other becomes a tag of its own in the Fandoms category.
