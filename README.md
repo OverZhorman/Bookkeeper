@@ -274,7 +274,19 @@ Everything personal lives in the `data` folder next to `Bookkeeper.bat`:
 - `browser-profile\`: the browser profiles Bookkeeper uses for logins, site tests and Author.Today;
 - `accounts\`: your logins and saved passwords, encrypted with your Windows account.
 
-To back up, copy the `data` folder.
+To back up, copy the `data` folder. Don't send it to anyone, though: it holds your logins. To share your library, see below.
+
+## Sharing your library with a friend
+
+A friend can start from your library instead of collecting for days.
+
+1. On the **Downloads** page, press **Make a copy to share**. A few minutes later a file such as `Bookkeeper library 2026-11-24.zip` is in your Downloads folder. It's packed to under a third of the library's size: 0.9 GB for 1.4 million books.
+2. Upload it to Google Drive (or send it any other way that takes big files) and share it with your friend: on Google Drive, right-click the file, choose **Share** and add their e-mail.
+3. Your friend installs Bookkeeper as above, downloads your file and drags it onto **`Bookkeeper.bat`**. Bookkeeper takes the library in, then starts. A library they already had is kept as `data\library-before-import-<date>.db`.
+
+The copy holds the books, their tags and narration checks, and where each site's collecting got to: when your friend switches a site on, it carries on from there. It doesn't hold your logins, saved passwords, AI key or token, shelves, notes, saved searches or downloaded books, and every site starts switched off. Your tag settings (`my_tags.toml`) come along, so new books get the same tags.
+
+Don't send the `data` folder or an archive of it instead: `browser-profile` and `accounts` hold your logins to the sites.
 
 ## Updating
 
@@ -282,7 +294,7 @@ Download the new ZIP and unpack it over the old folder. Your `data` folder is ke
 
 ## Fair use
 
-Bookkeeper is for your personal reading. It reads what the sites show to any visitor, or, when you log in, what your account can read, including chapters you bought. It doesn't get around paywalls. It reads each site slowly. Please don't share the database or the downloaded books.
+Bookkeeper is for your personal reading. It reads what the sites show to any visitor, or, when you log in, what your account can read, including chapters you bought. It doesn't get around paywalls. It reads each site slowly. Share copies of your library privately, with friends; please don't publish it, and don't share the downloaded books.
 
 ## Troubleshooting
 

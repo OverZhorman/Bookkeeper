@@ -348,6 +348,11 @@ details.settings .body { display: grid; gap: 8px; padding-top: 8px; }
 .help-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
 .help-card h2 { font-size: 15px; margin-bottom: 6px; }
 .help-card p, .help-card li { color: var(--muted); }
+.share-box { margin-top: 22px; max-width: 760px; }
+.share-box ol { margin: 6px 0 0 20px; display: grid; gap: 3px; }
+.share-box .mono { word-break: break-all; }
+.share-progress { margin: 10px 0 4px; display: grid; gap: 6px; }
+.share-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 code, .mono { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
 .toast {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;

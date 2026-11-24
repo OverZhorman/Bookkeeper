@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import (__version__, accounts, autoai, browser, config, db, diagnostics, export, handoff, labels, library,
-               search, tagai, tagedit)
+               search, sharing, tagai, tagedit)
 from .. import tags as T
 from ..config import USER_AGENT
 from ..crawler import DEFAULTS, Manager, site_settings
@@ -523,6 +523,21 @@ def create_app(manager: Manager, lan: bool = False) -> FastAPI:
         db.conn().execute("DELETE FROM downloads WHERE id=?", (job_id,))
         if p and p.exists():
             p.unlink()
+        return {"ok": True}
+
+    # ---------- a copy of the library to share ----------
+    @app.get("/api/share")
+    def share_status():
+        return sharing.status()
+
+    @app.post("/api/share")
+    def share_start():
+        return sharing.start()
+
+    @app.post("/api/share/show")
+    def share_show():
+        if not sharing.show():
+            raise HTTPException(404, "The copy isn't there any more.")
         return {"ok": True}
 
     # ---------- saved searches ----------

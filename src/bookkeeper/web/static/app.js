@@ -574,7 +574,8 @@ function drawResults(reset) {
     items.replaceChildren(h("div", { class: "empty" },
       h("h2", {}, emptyLibrary ? "Your library is empty so far" : "No books match these filters"),
       emptyLibrary ? h("p", {}, "Open the Sites page and switch on the sites you read. Bookkeeper starts collecting books in the background; they appear here as they come in.") : h("p", {}, "Try removing a filter, or include books whose narration hasn't been checked yet."),
-      emptyLibrary ? h("p", {}, h("a", { class: "btn primary", href: "#/sites" }, "Go to Sites")) : null));
+      emptyLibrary ? h("p", {}, h("a", { class: "btn primary", href: "#/sites" }, "Go to Sites")) : null,
+      emptyLibrary ? h("p", { class: "faint" }, "Got a library file from a friend? Close Bookkeeper (the black window), then drag the file onto Bookkeeper.bat.") : null));
   } else {
     const container = viewMode === "grid" ? h("div", { class: "grid" }) : h("div", { class: "list" });
     results.books.forEach((b) => container.append(viewMode === "grid" ? renderCard(b) : renderRow(b)));
@@ -1003,11 +1004,40 @@ async function drawBrowserBox() {
 }
 
 // ---------- downloads page ----------
+// ---------- a copy of the library to share ----------
+const SHARE_STAGE = { copy: "Copying your library", clean: "Leaving out your logins and other personal things", pack: "Packing it into one file" };
+const fmtSize = (n) => n >= 2 ** 29 ? `${(n / 2 ** 30).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 2 ** 20))} MB`;
+async function drawShare() {
+  let st;
+  try { st = await api.get("/api/share"); } catch { return; }
+  const el = $("#share"); if (!el) return;
+  const running = st.state === "running";
+  const pct = st.stage === "pack" && st.total ? Math.round((100 * st.done) / st.total) : null;
+  const mins = st.started ? Math.floor((Date.now() / 1000 - st.started) / 60) : 0;
+  fill(el, h("div", { class: "help-card share-box" },
+    h("h2", {}, "Share your library"),
+    h("p", {}, "Make one file with your whole library for a friend: every book with its tags and narration check, and how far each site's collecting got, so their Bookkeeper starts where yours is. Your logins, passwords, AI key, shelves, notes and downloaded books stay out."),
+    running ? h("div", { class: "share-progress" },
+      h("div", { class: "progress" }, h("span", { style: { width: `${pct ?? 0}%` } })),
+      h("span", { class: "faint" }, `${SHARE_STAGE[st.stage] || "Working"}… ${pct !== null ? `${pct}%` : mins ? `${mins} min so far` : "this takes a few minutes"}`)) : null,
+    st.state === "error" ? h("p", { style: { color: "var(--danger)" } }, st.error) : null,
+    st.state === "done" ? [
+      h("p", {}, "Ready: ", h("span", { class: "mono" }, st.file), ` (${fmtSize(st.size)}, ${fmtNum(st.books)} books).`),
+      h("ol", {},
+        h("li", {}, "Upload it to ", h("a", { href: "https://drive.google.com/drive/my-drive", target: "_blank", rel: "noopener" }, "Google Drive"), ": drag the file into the page, or press New → File upload."),
+        h("li", {}, "Share it with your friend: right-click the file there, choose Share, and add their e-mail."),
+        h("li", {}, "Your friend downloads Bookkeeper from its GitHub page (Code → Download ZIP) and unpacks it, downloads your file, and drags it onto Bookkeeper.bat."))] : null,
+    h("div", { class: "share-buttons" },
+      running ? null : h("button", { class: "btn primary", onclick: async (e) => { e.target.disabled = true; try { await api.post("/api/share"); } catch (err) { toast(err.message); } drawShare(); } }, st.state === "done" ? "Make a new copy" : "Make a copy to share"),
+      st.state === "done" ? h("button", { class: "btn", onclick: async () => { try { await api.post("/api/share/show"); } catch (err) { toast(err.message); } } }, "Show in folder") : null)));
+}
+
 async function renderDownloads() {
   const app = $("#app");
   app.replaceChildren(h("div", { class: "page" }, h("h1", {}, "Downloads"),
     h("p", { class: "lead" }, "Books you downloaded. The files are also saved in ", h("span", { class: "mono" }, meta.downloads_dir || "data/downloads"), ", so you can copy them to your e-reader straight from that folder."),
-    h("div", { id: "dl" })));
+    h("div", { id: "dl" }),
+    h("div", { id: "share" })));
   const draw = async () => {
     let list = [];
     try { list = await api.get("/api/downloads"); } catch { return; }
@@ -1021,8 +1051,8 @@ async function renderDownloads() {
         h("td", { style: { minWidth: "220px" } }, downloadLine(x)),
         h("td", {}, h("button", { class: "btn small ghost danger", onclick: async () => { await api.del(`/api/downloads/${x.id}`); draw(); } }, "Delete"))))));
   };
-  await draw();
-  pollTimer = setInterval(draw, 2500);
+  await Promise.all([draw(), drawShare()]);
+  pollTimer = setInterval(() => { draw(); drawShare(); }, 2500);
 }
 
 // ---------- help page ----------
@@ -1068,6 +1098,9 @@ function renderHelp() {
         h("p", {}, "Open ", h("span", { class: "mono" }, meta.user_tags_file || "data/my_tags.toml"), " in Notepad. You can map site labels to tags and add rules like “harem → romance”. Then press “Re-apply my tag rules” on the Sites page.")),
       h("div", { class: "help-card" }, h("h2", {}, "Your data"),
         h("p", {}, "Everything lives in ", h("span", { class: "mono" }, meta.data_dir || "data"), ": the library database, downloads, logs, browser profiles and your saved logins (encrypted, in accounts). Copy that folder to back it up.")),
+      h("div", { class: "help-card" }, h("h2", {}, "Sharing your library with a friend"),
+        h("p", {}, "Don't send the data folder: it holds your logins. Instead, press ", h("b", {}, "Make a copy to share"), " on the ", h("a", { href: "#/downloads" }, "Downloads"), " page. You get one .zip file with the books, tags and narration checks, without your logins, passwords, AI key, shelves, notes or downloads."),
+        h("p", {}, "Send it through Google Drive or anything else. Your friend unpacks Bookkeeper, then drags the file onto Bookkeeper.bat, and Bookkeeper starts with your library. A library they already had is kept beside it.")),
       h("div", { class: "help-card" }, h("h2", {}, "Being polite to the sites"),
         h("p", {}, "Each site gets its own slow, steady pace. If a site shows a bot check or blocks requests, Bookkeeper stops working on that site and tells you on the Sites page instead of retrying over and over.")),
       h("div", { class: "help-card" }, h("h2", {}, "Logging in"),
