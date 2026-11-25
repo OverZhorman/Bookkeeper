@@ -18,7 +18,7 @@ from .autoai import ApiError
 
 PROMPT = "Follow the instructions in the attached file exactly. Answer only with the JSON lines, all in one code block."
 SCRIPT = Path(__file__).parent / "web" / "gemini.user.js"
-SCRIPT_VERSION = 8
+SCRIPT_VERSION = 9
 NO_TAB_WAIT = 15 * 60      # seconds a batch waits for a Gemini tab to pick it up
 ANSWER_TIMEOUT = 55 * 60   # seconds from pickup to the answer (the script itself gives up after 50 minutes)
 TAB_LOST = 3 * 60          # a tab that hasn't asked for this long has been closed: another tab may take the batch

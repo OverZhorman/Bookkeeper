@@ -230,7 +230,7 @@ Both AI panels have a third part, **Or let Bookkeeper run it by itself**. It doe
 3. Type the **mode** as Gemini's mode menu names it (for example *Neon High*), or leave it empty to keep the tab's mode.
 4. Pick the batch size above, then press **Start**. For each batch the tab opens a new chat, picks the mode, attaches the request as a file, sends it, waits for the whole answer and hands it back; Bookkeeper applies it and waits 30 seconds.
 
-When the tab isn't signed in, or Gemini shows a usage limit, the run stops and says so. Automating the Gemini website may go against Google's terms for it, so you use it at your own risk.
+When a try fails, for example because Gemini couldn't upload the request file, Bookkeeper tries again a minute later in a freshly loaded chat, up to six times. When the tab isn't signed in, or Gemini shows a usage limit, the run stops and says so. Automating the Gemini website may go against Google's terms for it, so you use it at your own risk.
 
 **The Gemini API** needs an API key:
 
